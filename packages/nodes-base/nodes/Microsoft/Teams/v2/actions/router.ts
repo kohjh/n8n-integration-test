@@ -5,11 +5,10 @@ import {
 	NodeOperationError,
 } from 'n8n-workflow';
 
-import type { MicrosoftTeamsType } from './node.type';
-
 import * as channel from './channel';
 import * as channelMessage from './channelMessage';
 import * as chatMessage from './chatMessage';
+import type { MicrosoftTeamsType } from './node.type';
 import * as task from './task';
 
 export async function router(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
@@ -66,7 +65,7 @@ export async function router(this: IExecuteFunctions): Promise<INodeExecutionDat
 
 			returnData.push(...executionData);
 		} catch (error) {
-			if (this.continueOnFail(error)) {
+			if (this.continueOnFail()) {
 				const executionErrorData = this.helpers.constructExecutionMetaData(
 					this.helpers.returnJsonArray({ error: error.message }),
 					{ itemData: { item: i } },

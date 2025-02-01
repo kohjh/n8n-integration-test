@@ -3,10 +3,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
-import { Service } from 'typedi';
-import { NodeExecuteFunctions } from 'n8n-core';
+import { Service } from '@n8n/di';
 import get from 'lodash/get';
-
+import {
+	ErrorReporter,
+	Logger,
+	NodeExecuteFunctions,
+	RoutingNode,
+	isObjectLiteral,
+} from 'n8n-core';
 import type {
 	ICredentialsDecrypted,
 	ICredentialTestFunction,
@@ -25,23 +30,15 @@ import type {
 	ICredentialTestFunctions,
 	IDataObject,
 } from 'n8n-workflow';
-import {
-	VersionedNodeType,
-	NodeHelpers,
-	RoutingNode,
-	Workflow,
-	ErrorReporterProxy as ErrorReporter,
-	ApplicationError,
-} from 'n8n-workflow';
+import { VersionedNodeType, NodeHelpers, Workflow, ApplicationError } from 'n8n-workflow';
 
-import * as WorkflowExecuteAdditionalData from '@/WorkflowExecuteAdditionalData';
-import type { User } from '@db/entities/User';
-import { NodeTypes } from '@/NodeTypes';
-import { CredentialTypes } from '@/CredentialTypes';
+import { CredentialTypes } from '@/credential-types';
+import type { User } from '@/databases/entities/user';
+import { NodeTypes } from '@/node-types';
+import * as WorkflowExecuteAdditionalData from '@/workflow-execute-additional-data';
+
 import { RESPONSE_ERROR_MESSAGES } from '../constants';
-import { isObjectLiteral } from '../utils';
-import { Logger } from '@/Logger';
-import { CredentialsHelper } from '../CredentialsHelper';
+import { CredentialsHelper } from '../credentials-helper';
 
 const { OAUTH2_CREDENTIAL_TEST_SUCCEEDED, OAUTH2_CREDENTIAL_TEST_FAILED } = RESPONSE_ERROR_MESSAGES;
 
@@ -75,6 +72,7 @@ const mockNodeTypes: INodeTypes = {
 export class CredentialsTester {
 	constructor(
 		private readonly logger: Logger,
+		private readonly errorReporter: ErrorReporter,
 		private readonly credentialTypes: CredentialTypes,
 		private readonly nodeTypes: NodeTypes,
 		private readonly credentialsHelper: CredentialsHelper,
@@ -312,11 +310,10 @@ export class CredentialsTester {
 				runIndex,
 				nodeTypeCopy,
 				{ node, data: {}, source: null },
-				NodeExecuteFunctions,
 				credentialsDecrypted,
 			);
 		} catch (error) {
-			ErrorReporter.error(error);
+			this.errorReporter.error(error);
 			// Do not fail any requests to allow custom error messages and
 			// make logic easier
 			if (error.cause?.response) {

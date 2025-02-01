@@ -5,11 +5,17 @@ import userEvent from '@testing-library/user-event';
 import { faker } from '@faker-js/faker';
 import { STORES, VIEWS } from '@/constants';
 import ExecutionsList from '@/components/executions/global/GlobalExecutionsList.vue';
-import type { IWorkflowDb } from '@/Interface';
 import { randomInt, type ExecutionSummary } from 'n8n-workflow';
-import { retry, SETTINGS_STORE_DEFAULT_STATE, waitAllPromises } from '@/__tests__/utils';
+import type { MockedStore } from '@/__tests__/utils';
+import {
+	mockedStore,
+	retry,
+	SETTINGS_STORE_DEFAULT_STATE,
+	waitAllPromises,
+} from '@/__tests__/utils';
 import { createComponentRenderer } from '@/__tests__/render';
 import { waitFor } from '@testing-library/vue';
+import { useSettingsStore } from '@/stores/settings.store';
 
 vi.mock('vue-router', () => ({
 	useRoute: vi.fn().mockReturnValue({
@@ -19,7 +25,7 @@ vi.mock('vue-router', () => ({
 	RouterLink: vi.fn(),
 }));
 
-let pinia: ReturnType<typeof createTestingPinia>;
+let settingsStore: MockedStore<typeof useSettingsStore>;
 
 const generateUndefinedNullOrString = () => {
 	switch (randomInt(4)) {
@@ -36,22 +42,11 @@ const generateUndefinedNullOrString = () => {
 	}
 };
 
-const workflowDataFactory = (): IWorkflowDb => ({
-	createdAt: faker.date.past().toDateString(),
-	updatedAt: faker.date.past().toDateString(),
-	id: faker.string.uuid(),
-	name: faker.string.sample(),
-	active: faker.datatype.boolean(),
-	tags: [],
-	nodes: [],
-	connections: {},
-	versionId: faker.number.int().toString(),
-});
-
 const executionDataFactory = (): ExecutionSummary => ({
 	id: faker.string.uuid(),
 	finished: faker.datatype.boolean(),
 	mode: faker.helpers.arrayElement(['manual', 'trigger']),
+	createdAt: faker.date.past(),
 	startedAt: faker.date.past(),
 	stoppedAt: faker.date.past(),
 	workflowId: faker.number.int().toString(),
@@ -62,8 +57,6 @@ const executionDataFactory = (): ExecutionSummary => ({
 	retrySuccessId: generateUndefinedNullOrString(),
 });
 
-const generateWorkflowsData = () => Array.from({ length: 10 }, workflowDataFactory);
-
 const generateExecutionsData = () =>
 	Array.from({ length: 2 }, () => ({
 		count: 20,
@@ -72,6 +65,20 @@ const generateExecutionsData = () =>
 	}));
 
 const renderComponent = createComponentRenderer(ExecutionsList, {
+	pinia: createTestingPinia({
+		initialState: {
+			[STORES.EXECUTIONS]: {
+				executions: [],
+			},
+			[STORES.SETTINGS]: {
+				settings: merge(SETTINGS_STORE_DEFAULT_STATE.settings, {
+					enterprise: {
+						advancedExecutionFilters: true,
+					},
+				}),
+			},
+		},
+	}),
 	props: {
 		autoRefreshEnabled: false,
 	},
@@ -94,29 +101,17 @@ describe('GlobalExecutionsList', () => {
 
 	beforeEach(() => {
 		executionsData = generateExecutionsData();
-
-		pinia = createTestingPinia({
-			initialState: {
-				[STORES.EXECUTIONS]: {
-					executions: [],
-				},
-				[STORES.SETTINGS]: {
-					settings: merge(SETTINGS_STORE_DEFAULT_STATE.settings, {
-						enterprise: {
-							advancedExecutionFilters: true,
-						},
-					}),
-				},
-			},
-		});
+		settingsStore = mockedStore(useSettingsStore);
 	});
 
 	it('should render empty list', async () => {
 		const { queryAllByTestId, queryByTestId, getByTestId } = renderComponent({
 			props: {
 				executions: [],
+				filters: {},
+				total: 0,
+				estimated: false,
 			},
-			pinia,
 		});
 		await waitAllPromises();
 
@@ -136,8 +131,9 @@ describe('GlobalExecutionsList', () => {
 					executions: executionsData[0].results,
 					total: executionsData[0].count,
 					filteredExecutions: executionsData[0].results,
+					filters: {},
+					estimated: false,
 				},
-				pinia,
 			});
 			await waitAllPromises();
 
@@ -200,12 +196,25 @@ describe('GlobalExecutionsList', () => {
 				executions: executionsData[0].results,
 				total: executionsData[0].count,
 				filteredExecutions: executionsData[0].results,
+				filters: {},
+				estimated: false,
 			},
-			pinia,
 		});
 		await waitAllPromises();
 
 		expect(queryAllByText(/Retry of/).length).toBe(retryOf.length);
 		expect(queryAllByText(/Success retry/).length).toBe(retrySuccessId.length);
+	});
+
+	it('should render concurrent executions header if the feature is enabled', async () => {
+		settingsStore.concurrency = 5;
+		const { getByTestId } = renderComponent({
+			props: {
+				executions: executionsData[0].results,
+				filters: {},
+			},
+		});
+
+		expect(getByTestId('concurrent-executions-header')).toBeVisible();
 	});
 });

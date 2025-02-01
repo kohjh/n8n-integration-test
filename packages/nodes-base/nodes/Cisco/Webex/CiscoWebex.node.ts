@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import type {
 	IDataObject,
 	IExecuteFunctions,
@@ -7,9 +8,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-
-import moment from 'moment-timezone';
-import { getAttachments, webexApiRequest, webexApiRequestAllItems } from './GenericFunctions';
+import { NodeConnectionType } from 'n8n-workflow';
 
 import {
 	meetingFields,
@@ -19,6 +18,7 @@ import {
 	messageFields,
 	messageOperations,
 } from './descriptions';
+import { getAttachments, webexApiRequest, webexApiRequestAllItems } from './GenericFunctions';
 
 export class CiscoWebex implements INodeType {
 	description: INodeTypeDescription = {
@@ -39,8 +39,8 @@ export class CiscoWebex implements INodeType {
 				required: true,
 			},
 		],
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		properties: [
 			{
 				displayName: 'Resource',
@@ -489,7 +489,7 @@ export class CiscoWebex implements INodeType {
 
 				returnData.push(...(responseData as INodeExecutionData[]));
 			} catch (error) {
-				if (this.continueOnFail(error)) {
+				if (this.continueOnFail()) {
 					returnData.push({ error: error.toString(), json: {}, itemIndex: i });
 					continue;
 				}
@@ -548,7 +548,7 @@ export class CiscoWebex implements INodeType {
 		// 					returnData.push(...responseData.items);
 		// 				}
 		// 			} catch (error) {
-		// 				if (this.continueOnFail(error)) {
+		// 				if (this.continueOnFail()) {
 		// 					returnData.push({
 		// 						error: error.message,
 		// 					});

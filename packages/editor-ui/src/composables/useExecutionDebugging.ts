@@ -16,6 +16,8 @@ import { useUIStore } from '@/stores/ui.store';
 import { useTelemetry } from './useTelemetry';
 import { useRootStore } from '@/stores/root.store';
 import { isFullExecutionResponse } from '@/utils/typeGuards';
+import { sanitizeHtml } from '@/utils/htmlUtils';
+import { usePageRedirectionHelper } from './usePageRedirectionHelper';
 
 export const useExecutionDebugging = () => {
 	const telemetry = useTelemetry();
@@ -28,8 +30,10 @@ export const useExecutionDebugging = () => {
 	const settingsStore = useSettingsStore();
 	const uiStore = useUIStore();
 
-	const isDebugEnabled = computed(() =>
-		settingsStore.isEnterpriseFeatureEnabled(EnterpriseEditionFeature.DebugInEditor),
+	const pageRedirectionHelper = usePageRedirectionHelper();
+
+	const isDebugEnabled = computed(
+		() => settingsStore.isEnterpriseFeatureEnabled[EnterpriseEditionFeature.DebugInEditor],
 	);
 
 	const applyExecutionData = async (executionId: string): Promise<void> => {
@@ -61,7 +65,7 @@ export const useExecutionDebugging = () => {
 				h(
 					'ul',
 					{ class: 'mt-l ml-l' },
-					matchingPinnedNodeNames.map((name) => h('li', name)),
+					matchingPinnedNodeNames.map((name) => h('li', sanitizeHtml(name))),
 				),
 			]);
 
@@ -72,7 +76,7 @@ export const useExecutionDebugging = () => {
 					type: 'warning',
 					confirmButtonText: i18n.baseText('nodeView.confirmMessage.debug.confirmButtonText'),
 					cancelButtonText: i18n.baseText('nodeView.confirmMessage.debug.cancelButtonText'),
-					dangerouslyUseHTMLString: true,
+
 					customClass: 'matching-pinned-nodes-confirmation',
 				},
 			);
@@ -104,7 +108,7 @@ export const useExecutionDebugging = () => {
 		let pinnings = 0;
 
 		pinnableNodes.forEach((node: INodeUi) => {
-			const nodeData = runData[node.name]?.[0].data?.main[0];
+			const nodeData = runData[node.name]?.[0]?.data?.main?.[0];
 			if (nodeData) {
 				pinnings++;
 				workflowsStore.pinData({
@@ -146,7 +150,7 @@ export const useExecutionDebugging = () => {
 					title: i18n.baseText(uiStore.contextBasedTranslationKeys.feature.unavailable.title),
 					footerButtonAction: () => {
 						uiStore.closeModal(DEBUG_PAYWALL_MODAL_KEY);
-						void uiStore.goToUpgrade('debug', 'upgrade-debug');
+						void pageRedirectionHelper.goToUpgrade('debug', 'upgrade-debug');
 					},
 				},
 			});

@@ -1,5 +1,13 @@
 import type { INodeProperties } from 'n8n-workflow';
 
+import { appendAttributionOption } from '../../utils/descriptions';
+
+export const placeholder: string = `
+<!-- Your custom HTML here --->
+
+
+`.trimStart();
+
 export const webhookPath: INodeProperties = {
 	displayName: 'Form Path',
 	name: 'path',
@@ -27,13 +35,16 @@ export const formDescription: INodeProperties = {
 	default: '',
 	placeholder: "e.g. We'll get back to you soon",
 	description:
-		'Shown underneath the Form Title. Can be used to prompt the user on how to complete the form.',
+		'Shown underneath the Form Title. Can be used to prompt the user on how to complete the form. Accepts HTML.',
+	typeOptions: {
+		rows: 2,
+	},
 };
 
 export const formFields: INodeProperties = {
-	displayName: 'Form Fields',
+	displayName: 'Form Elements',
 	name: 'formFields',
-	placeholder: 'Add Form Field',
+	placeholder: 'Add Form Element',
 	type: 'fixedCollection',
 	default: { values: [{ label: '', fieldType: 'text' }] },
 	typeOptions: {
@@ -51,16 +62,25 @@ export const formFields: INodeProperties = {
 					type: 'string',
 					default: '',
 					placeholder: 'e.g. What is your name?',
-					description: 'Label appears above the input field',
+					description: 'Label that appears above the input field',
 					required: true,
+					displayOptions: {
+						hide: {
+							fieldType: ['hiddenField'],
+						},
+					},
 				},
 				{
-					displayName: 'Field Type',
+					displayName: 'Element Type',
 					name: 'fieldType',
 					type: 'options',
 					default: 'text',
 					description: 'The type of field to add to the form',
 					options: [
+						{
+							name: 'Custom HTML',
+							value: 'html',
+						},
 						{
 							name: 'Date',
 							value: 'date',
@@ -68,6 +88,18 @@ export const formFields: INodeProperties = {
 						{
 							name: 'Dropdown List',
 							value: 'dropdown',
+						},
+						{
+							name: 'Email',
+							value: 'email',
+						},
+						{
+							name: 'File',
+							value: 'file',
+						},
+						{
+							name: 'Hidden Field',
+							value: 'hiddenField',
 						},
 						{
 							name: 'Number',
@@ -87,6 +119,44 @@ export const formFields: INodeProperties = {
 						},
 					],
 					required: true,
+				},
+				{
+					displayName: 'Placeholder',
+					name: 'placeholder',
+					description: 'Sample text to display inside the field',
+					type: 'string',
+					default: '',
+					displayOptions: {
+						hide: {
+							fieldType: ['dropdown', 'date', 'file', 'html', 'hiddenField'],
+						},
+					},
+				},
+				{
+					displayName: 'Field Name',
+					name: 'fieldName',
+					description:
+						'The name of the field, used in input attributes and referenced by the workflow',
+					type: 'string',
+					default: '',
+					displayOptions: {
+						show: {
+							fieldType: ['hiddenField'],
+						},
+					},
+				},
+				{
+					displayName: 'Field Value',
+					name: 'fieldValue',
+					description:
+						'Input value can be set here or will be passed as a query parameter via Field Name if no value is set',
+					type: 'string',
+					default: '',
+					displayOptions: {
+						show: {
+							fieldType: ['hiddenField'],
+						},
+					},
 				},
 				{
 					displayName: 'Field Options',
@@ -134,12 +204,82 @@ export const formFields: INodeProperties = {
 					},
 				},
 				{
+					displayName: 'HTML Template',
+					name: 'html',
+					typeOptions: {
+						editor: 'htmlEditor',
+					},
+					type: 'string',
+					default: placeholder,
+					description: 'HTML template to render',
+					displayOptions: {
+						show: {
+							fieldType: ['html'],
+						},
+					},
+				},
+				{
+					displayName: 'Multiple Files',
+					name: 'multipleFiles',
+					type: 'boolean',
+					default: true,
+					description:
+						'Whether to allow the user to select multiple files from the file input or just one',
+					displayOptions: {
+						show: {
+							fieldType: ['file'],
+						},
+					},
+				},
+				{
+					displayName: 'Accepted File Types',
+					name: 'acceptFileTypes',
+					type: 'string',
+					default: '',
+					description: 'Comma-separated list of allowed file extensions',
+					hint: 'Leave empty to allow all file types',
+					placeholder: 'e.g. .jpg, .png',
+					displayOptions: {
+						show: {
+							fieldType: ['file'],
+						},
+					},
+				},
+				{
+					displayName: "The displayed date is formatted based on the locale of the user's browser",
+					name: 'formatDate',
+					type: 'notice',
+					default: '',
+					displayOptions: {
+						show: {
+							fieldType: ['date'],
+						},
+					},
+				},
+				{
+					displayName:
+						'Does not accept <code>&lt;style&gt;</code> <code>&lt;script&gt;</code> or <code>&lt;input&gt;</code> tags.',
+					name: 'htmlTips',
+					type: 'notice',
+					default: '',
+					displayOptions: {
+						show: {
+							fieldType: ['html'],
+						},
+					},
+				},
+				{
 					displayName: 'Required Field',
 					name: 'requiredField',
 					type: 'boolean',
 					default: false,
 					description:
 						'Whether to require the user to enter a value for this field before submitting the form',
+					displayOptions: {
+						hide: {
+							fieldType: ['html', 'hiddenField'],
+						},
+					},
 				},
 			],
 		},
@@ -191,7 +331,7 @@ export const respondWithOptions: INodeProperties = {
 	displayName: 'Form Response',
 	name: 'respondWithOptions',
 	type: 'fixedCollection',
-	placeholder: 'Add Option',
+	placeholder: 'Add option',
 	default: { values: { respondWith: 'text' } },
 	options: [
 		{
@@ -248,4 +388,9 @@ export const respondWithOptions: INodeProperties = {
 			],
 		},
 	],
+};
+
+export const appendAttributionToForm: INodeProperties = {
+	...appendAttributionOption,
+	description: 'Whether to include the link “Form automated with n8n” at the bottom of the form',
 };

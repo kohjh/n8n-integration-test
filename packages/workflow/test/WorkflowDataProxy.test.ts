@@ -1,7 +1,17 @@
-import type { IExecuteData, INode, IRun, IWorkflowBase } from '@/Interfaces';
+import { ensureError } from '@/errors/ensure-error';
+import { ExpressionError } from '@/errors/expression.error';
+import {
+	NodeConnectionType,
+	type IExecuteData,
+	type INode,
+	type IPinData,
+	type IRun,
+	type IWorkflowBase,
+	type WorkflowExecuteMode,
+} from '@/Interfaces';
 import { Workflow } from '@/Workflow';
 import { WorkflowDataProxy } from '@/WorkflowDataProxy';
-import { ExpressionError } from '@/errors/expression.error';
+
 import * as Helpers from './Helpers';
 
 const loadFixture = (fixture: string) => {
@@ -13,9 +23,20 @@ const loadFixture = (fixture: string) => {
 	return { workflow, run };
 };
 
-const getProxyFromFixture = (workflow: IWorkflowBase, run: IRun | null, activeNode: string) => {
-	const taskData = run?.data.resultData.runData[activeNode]?.[0];
-	const lastNodeConnectionInputData = taskData?.data?.main[0];
+const getProxyFromFixture = (
+	workflow: IWorkflowBase,
+	run: IRun | null,
+	activeNode: string,
+	mode?: WorkflowExecuteMode,
+	opts?: {
+		throwOnMissingExecutionData: boolean;
+		connectionType?: NodeConnectionType;
+		runIndex?: number;
+	},
+) => {
+	const taskData = run?.data.resultData.runData[activeNode]?.[opts?.runIndex ?? 0];
+	const lastNodeConnectionInputData =
+		taskData?.data?.[opts?.connectionType ?? NodeConnectionType.Main]?.[0];
 
 	let executeData: IExecuteData | undefined;
 
@@ -24,9 +45,19 @@ const getProxyFromFixture = (workflow: IWorkflowBase, run: IRun | null, activeNo
 			data: taskData.data!,
 			node: workflow.nodes.find((node) => node.name === activeNode) as INode,
 			source: {
-				main: taskData.source,
+				[opts?.connectionType ?? NodeConnectionType.Main]: taskData.source,
 			},
 		};
+	}
+
+	let pinData: IPinData = {};
+	if (workflow.pinData) {
+		// json key is stored as part of workflow
+		// but dropped when copy/pasting
+		// so adding here to keep updating tests simple
+		for (let nodeName in workflow.pinData) {
+			pinData[nodeName] = workflow.pinData[nodeName].map((item) => ({ json: item }));
+		}
 	}
 
 	const dataProxy = new WorkflowDataProxy(
@@ -37,19 +68,20 @@ const getProxyFromFixture = (workflow: IWorkflowBase, run: IRun | null, activeNo
 			connections: workflow.connections,
 			active: false,
 			nodeTypes: Helpers.NodeTypes(),
+			pinData,
 		}),
 		run?.data ?? null,
-		0,
+		opts?.runIndex ?? 0,
 		0,
 		activeNode,
 		lastNodeConnectionInputData ?? [],
 		{},
-		'manual',
+		mode ?? 'integrated',
 		{},
 		executeData,
 	);
 
-	return dataProxy.getDataProxy();
+	return dataProxy.getDataProxy(opts);
 };
 
 describe('WorkflowDataProxy', () => {
@@ -303,7 +335,9 @@ describe('WorkflowDataProxy', () => {
 			} catch (error) {
 				expect(error).toBeInstanceOf(ExpressionError);
 				const exprError = error as ExpressionError;
-				expect(exprError.message).toEqual("Can't get data for expression");
+				expect(exprError.message).toEqual(
+					"Using the item method doesn't work with pinned data in this scenario. Please unpin 'Break pairedItem chain' and try again.",
+				);
 				expect(exprError.context.type).toEqual('paired_item_no_info');
 				done();
 			}
@@ -321,6 +355,239 @@ describe('WorkflowDataProxy', () => {
 				expect(exprError.context.type).toEqual('paired_item_invalid_info');
 				done();
 			}
+		});
+	});
+
+	describe('Pinned data with manual execution', () => {
+		const fixture = loadFixture('pindata');
+		const proxy = getProxyFromFixture(fixture.workflow, null, 'NotPinnedSet1', 'manual');
+
+		test('$(PinnedSet).item.json', () => {
+			expect(proxy.$('PinnedSet').item.json).toEqual({ firstName: 'Joe', lastName: 'Smith' });
+		});
+
+		test('$(PinnedSet).item.json.firstName', () => {
+			expect(proxy.$('PinnedSet').item.json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).pairedItem().json.firstName', () => {
+			expect(proxy.$('PinnedSet').pairedItem().json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).first().json.firstName', () => {
+			expect(proxy.$('PinnedSet').first().json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).first().json.firstName', () => {
+			expect(proxy.$('PinnedSet').first().json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).last().json.firstName', () => {
+			expect(proxy.$('PinnedSet').last().json.firstName).toBe('Joan');
+		});
+
+		test('$(PinnedSet).all()[0].json.firstName', () => {
+			expect(proxy.$('PinnedSet').all()[0].json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).all()[1].json.firstName', () => {
+			expect(proxy.$('PinnedSet').all()[1].json.firstName).toBe('Joan');
+		});
+
+		test('$(PinnedSet).all()[2]', () => {
+			expect(proxy.$('PinnedSet').all()[2]).toBeUndefined();
+		});
+
+		test('$(PinnedSet).itemMatching(0).json.firstName', () => {
+			expect(proxy.$('PinnedSet').itemMatching(0).json.firstName).toBe('Joe');
+		});
+
+		test('$(PinnedSet).itemMatching(1).json.firstName', () => {
+			expect(proxy.$('PinnedSet').itemMatching(1).json.firstName).toBe('Joan');
+		});
+
+		test('$(PinnedSet).itemMatching(2)', () => {
+			expect(proxy.$('PinnedSet').itemMatching(2)).toBeUndefined();
+		});
+
+		test('$node[PinnedSet].json.firstName', () => {
+			expect(proxy.$node.PinnedSet.json.firstName).toBe('Joe');
+		});
+	});
+
+	describe('Pinned data with paired items', () => {
+		const fixture = loadFixture('pindata_paireditem');
+		const proxy = getProxyFromFixture(fixture.workflow, fixture.run, 'Set', 'manual', {
+			runIndex: 0,
+			throwOnMissingExecutionData: false,
+		});
+
+		test.each([{ methodName: 'itemMatching' }, { methodName: 'pairedItem' }])(
+			'$methodName should throw when it cannot find a paired item',
+			async ({ methodName }) => {
+				try {
+					proxy.$('DebugHelper')[methodName](0);
+					fail('should throw');
+				} catch (e) {
+					const error = ensureError(e);
+					expect(error.message).toEqual(
+						`Using the ${methodName} method doesn't work with pinned data in this scenario. Please unpin 'Edit Fields' and try again.`,
+					);
+
+					expect(error).toMatchObject({
+						functionality: 'pairedItem',
+						context: {
+							runIndex: 0,
+							itemIndex: 0,
+							type: 'paired_item_no_info',
+							descriptionKey: 'pairedItemNoInfo',
+							nodeCause: 'Edit Fields',
+							causeDetailed:
+								"Missing pairedItem data (node 'Edit Fields' probably didn't supply it)",
+						},
+					});
+				}
+			},
+		);
+
+		test('item should throw when it cannot find a paired item', async () => {
+			try {
+				proxy.$('DebugHelper').item;
+				fail('should throw');
+			} catch (e) {
+				const error = ensureError(e);
+				expect(error.message).toEqual(
+					"Using the item method doesn't work with pinned data in this scenario. Please unpin 'Edit Fields' and try again.",
+				);
+
+				expect(error).toMatchObject({
+					functionality: 'pairedItem',
+					context: {
+						runIndex: 0,
+						itemIndex: 0,
+						type: 'paired_item_no_info',
+						descriptionKey: 'pairedItemNoInfo',
+						nodeCause: 'Edit Fields',
+						causeDetailed: "Missing pairedItem data (node 'Edit Fields' probably didn't supply it)",
+					},
+				});
+			}
+		});
+	});
+
+	describe('Partial data', () => {
+		const fixture = loadFixture('partial_data');
+
+		describe('Default behaviour (throw on missing execution data)', () => {
+			const proxy = getProxyFromFixture(fixture.workflow, fixture.run, 'End');
+
+			test('$binary', () => {
+				expect(() => proxy.$binary).toThrowError(ExpressionError);
+			});
+
+			test('$json', () => {
+				expect(() => proxy.$json).toThrowError(ExpressionError);
+			});
+
+			test('$data', () => {
+				expect(() => proxy.$data).toThrowError(ExpressionError);
+			});
+		});
+
+		describe("Don't throw on missing execution data)", () => {
+			const proxy = getProxyFromFixture(fixture.workflow, fixture.run, 'End', undefined, {
+				throwOnMissingExecutionData: false,
+			});
+
+			test('$binary', () => {
+				expect(proxy.$binary).toBeUndefined();
+			});
+
+			test('$json', () => {
+				expect(proxy.$json).toBeUndefined();
+			});
+
+			test('$data', () => {
+				expect(proxy.$data).toBeUndefined();
+			});
+		});
+	});
+
+	describe('$fromAI', () => {
+		const fixture = loadFixture('from_ai_multiple_items');
+		const getFromAIProxy = (runIndex = 0) =>
+			getProxyFromFixture(fixture.workflow, fixture.run, 'Google Sheets1', 'manual', {
+				connectionType: NodeConnectionType.AiTool,
+				throwOnMissingExecutionData: false,
+				runIndex,
+			});
+
+		test('Retrieves values for first item', () => {
+			expect(getFromAIProxy().$fromAI('full_name')).toEqual('Mr. Input 1');
+			expect(getFromAIProxy().$fromAI('email')).toEqual('input1@n8n.io');
+		});
+
+		test('Retrieves values for second item', () => {
+			expect(getFromAIProxy(1).$fromAI('full_name')).toEqual('Mr. Input 2');
+			expect(getFromAIProxy(1).$fromAI('email')).toEqual('input2@n8n.io');
+		});
+
+		test('Case variants: $fromAi and $fromai', () => {
+			expect(getFromAIProxy().$fromAi('full_name')).toEqual('Mr. Input 1');
+			expect(getFromAIProxy().$fromai('email')).toEqual('input1@n8n.io');
+		});
+
+		test('Returns default value when key not found', () => {
+			expect(
+				getFromAIProxy().$fromAI('non_existent_key', 'description', 'string', 'default_value'),
+			).toEqual('default_value');
+		});
+
+		test('Throws an error when a key is invalid (e.g. empty string)', () => {
+			expect(() => getFromAIProxy().$fromAI('')).toThrow(ExpressionError);
+			expect(() => getFromAIProxy().$fromAI('invalid key')).toThrow(ExpressionError);
+			expect(() => getFromAIProxy().$fromAI('invalid!')).toThrow(ExpressionError);
+		});
+	});
+
+	describe('$rawParameter', () => {
+		const fixture = loadFixture('rawParameter');
+		const proxy = getProxyFromFixture(fixture.workflow, fixture.run, 'Execute Workflow', 'manual', {
+			connectionType: NodeConnectionType.Main,
+			throwOnMissingExecutionData: false,
+			runIndex: 0,
+		});
+
+		test('returns simple raw parameter value', () => {
+			expect(proxy.$rawParameter.options).toEqual({
+				waitForSubWorkflow: '={{ true }}',
+			});
+		});
+
+		test('returns raw parameter value for resource locator values', () => {
+			expect(proxy.$rawParameter.workflowId).toEqual('={{ $json.foo }}');
+		});
+
+		test('returns raw parameter value when there is no run data', () => {
+			const noRunDataProxy = getProxyFromFixture(
+				fixture.workflow,
+				{
+					data: { resultData: { runData: {} } },
+					mode: 'manual',
+					startedAt: new Date(),
+					status: 'success',
+				},
+				'Execute Workflow',
+				'manual',
+				{
+					connectionType: NodeConnectionType.Main,
+					throwOnMissingExecutionData: false,
+					runIndex: 0,
+				},
+			);
+			expect(noRunDataProxy.$rawParameter.options).toEqual({
+				waitForSubWorkflow: '={{ true }}',
+			});
 		});
 	});
 });

@@ -7,16 +7,16 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
+import { NodeConnectionType } from 'n8n-workflow';
 
 import { deepLApiRequest } from './GenericFunctions';
-
 import { textOperations } from './TextDescription';
 
 export class DeepL implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'DeepL',
 		name: 'deepL',
-		icon: { light: 'file:deepl.svg', dark: 'file:deepl.dark.svg' },
+		icon: { light: 'file:deepl.svg', dark: 'file:deepL.dark.svg' },
 		group: ['input', 'output'],
 		version: 1,
 		description: 'Translate data using DeepL',
@@ -24,8 +24,8 @@ export class DeepL implements INodeType {
 		defaults: {
 			name: 'DeepL',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: [
 			{
 				name: 'deepLApi',
@@ -137,7 +137,7 @@ export class DeepL implements INodeType {
 					}
 				}
 			} catch (error) {
-				if (this.continueOnFail(error)) {
+				if (this.continueOnFail()) {
 					const executionErrorData = {
 						json: {} as IDataObject,
 						error: error.message,

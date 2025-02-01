@@ -30,6 +30,7 @@ const FORM_CONFIG: IFormBoxConfig = {
 				required: true,
 				autocomplete: 'given-name',
 				capitalize: true,
+				focusInitially: true,
 			},
 		},
 		{
@@ -130,7 +131,7 @@ async function onSubmit(values: { [key: string]: string | boolean }) {
 			} catch {}
 		}
 
-		await router.push({ name: VIEWS.NEW_WORKFLOW });
+		await router.push({ name: VIEWS.HOMEPAGE });
 	} catch (error) {
 		toast.showError(error, i18n.baseText('auth.signup.setupYourAccountError'));
 	}

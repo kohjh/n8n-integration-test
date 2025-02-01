@@ -16,8 +16,8 @@ const OPEN_WIDTH = '204px';
 const OPEN_MIN_WIDTH = '120px';
 
 const emit = defineEmits<{
-	(event: 'update:modelValue', value: Props['modelValue']): void;
-	(event: 'focus'): void;
+	'update:modelValue': [value: Props['modelValue']];
+	focus: [];
 }>();
 
 const props = withDefaults(defineProps<Props>(), {
@@ -31,7 +31,7 @@ const { debounce } = useDebounce();
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const search = ref(props.modelValue ?? '');
-const opened = ref(false);
+const opened = ref(!!search.value);
 const placeholder = computed(() => {
 	if (props.paneType === 'output') {
 		return locale.baseText('ndv.search.placeholder.output');

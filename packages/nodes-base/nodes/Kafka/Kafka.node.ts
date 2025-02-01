@@ -1,8 +1,6 @@
+import { SchemaRegistry } from '@kafkajs/confluent-schema-registry';
 import type { KafkaConfig, SASLOptions, TopicMessages } from 'kafkajs';
 import { CompressionTypes, Kafka as apacheKafka } from 'kafkajs';
-
-import { SchemaRegistry } from '@kafkajs/confluent-schema-registry';
-
 import type {
 	IExecuteFunctions,
 	ICredentialDataDecryptedObject,
@@ -14,7 +12,8 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { ApplicationError, NodeOperationError } from 'n8n-workflow';
+import { ApplicationError, NodeConnectionType, NodeOperationError } from 'n8n-workflow';
+
 import { generatePairedItemData } from '../../utils/utilities';
 
 export class Kafka implements INodeType {
@@ -28,8 +27,8 @@ export class Kafka implements INodeType {
 		defaults: {
 			name: 'Kafka',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: [
 			{
 				name: 'kafka',
@@ -178,7 +177,7 @@ export class Kafka implements INodeType {
 				name: 'options',
 				type: 'collection',
 				default: {},
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				options: [
 					{
 						displayName: 'Acks',
@@ -229,7 +228,6 @@ export class Kafka implements INodeType {
 					};
 					if (credentials.authentication === true) {
 						if (!(credentials.username && credentials.password)) {
-							// eslint-disable-next-line n8n-nodes-base/node-execute-block-wrong-error-thrown
 							throw new ApplicationError('Username and password are required for authentication', {
 								level: 'warning',
 							});
@@ -408,7 +406,7 @@ export class Kafka implements INodeType {
 
 			return [executionData];
 		} catch (error) {
-			if (this.continueOnFail(error)) {
+			if (this.continueOnFail()) {
 				return [[{ json: { error: error.message }, pairedItem: itemData }]];
 			} else {
 				throw error;

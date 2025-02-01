@@ -5,6 +5,7 @@ import ParameterInputFull from '@/components/ParameterInputFull.vue';
 import ParameterInputHint from '@/components/ParameterInputHint.vue';
 import ParameterIssues from '@/components/ParameterIssues.vue';
 import { useWorkflowHelpers } from '@/composables/useWorkflowHelpers';
+import { useWorkflowsStore } from '@/stores/workflows.store';
 import { isExpression, stringifyExpressionResult } from '@/utils/expressions';
 import type { AssignmentValue, INodeProperties, Result } from 'n8n-workflow';
 import { computed, ref } from 'vue';
@@ -26,8 +27,8 @@ const props = defineProps<Props>();
 const assignment = ref<AssignmentValue>(props.modelValue);
 
 const emit = defineEmits<{
-	(event: 'update:model-value', value: AssignmentValue): void;
-	(event: 'remove'): void;
+	'update:model-value': [value: AssignmentValue];
+	remove: [];
 }>();
 
 const ndvStore = useNDVStore();
@@ -88,7 +89,7 @@ const hint = computed(() => {
 			undefined,
 			ndvStore.isInputParentOfActiveNode
 				? {
-						targetItem: ndvStore.hoveringItem ?? undefined,
+						targetItem: ndvStore.expressionTargetItem ?? undefined,
 						inputNodeName: ndvStore.ndvInputNodeName,
 						inputRunIndex: ndvStore.ndvInputRunIndex,
 						inputBranchIndex: ndvStore.ndvInputBranchIndex,
@@ -101,12 +102,15 @@ const hint = computed(() => {
 		result = { ok: false, error };
 	}
 
-	return stringifyExpressionResult(result);
+	const hasRunData =
+		!!useWorkflowsStore().workflowExecutionData?.data?.resultData?.runData[
+			ndvStore.activeNode?.name ?? ''
+		];
+
+	return stringifyExpressionResult(result, hasRunData);
 });
 
-const highlightHint = computed(() =>
-	Boolean(hint.value && ndvStore.hoveringItem && ndvStore.isInputParentOfActiveNode),
-);
+const highlightHint = computed(() => Boolean(hint.value && ndvStore.getHoveringItem));
 
 const valueIsExpression = computed(() => {
 	const { value } = assignment.value;
@@ -148,6 +152,14 @@ const onBlur = (): void => {
 		}"
 		data-test-id="assignment"
 	>
+		<N8nIconButton
+			v-if="!isReadOnly"
+			type="tertiary"
+			text
+			size="mini"
+			icon="grip-vertical"
+			:class="[$style.iconButton, $style.defaultTopPadding, 'drag-handle']"
+		></N8nIconButton>
 		<n8n-icon-button
 			v-if="!isReadOnly"
 			type="tertiary"
@@ -155,7 +167,7 @@ const onBlur = (): void => {
 			size="mini"
 			icon="trash"
 			data-test-id="assignment-remove"
-			:class="$style.remove"
+			:class="[$style.iconButton, $style.extraTopPadding]"
 			@click="onRemove"
 		></n8n-icon-button>
 
@@ -237,7 +249,7 @@ const onBlur = (): void => {
 	}
 
 	&:hover {
-		.remove {
+		.iconButton {
 			opacity: 1;
 		}
 	}
@@ -265,12 +277,19 @@ const onBlur = (): void => {
 	}
 }
 
-.remove {
+.iconButton {
 	position: absolute;
 	left: 0;
-	top: var(--spacing-l);
 	opacity: 0;
 	transition: opacity 100ms ease-in;
+	color: var(--icon-base-color);
+}
+.extraTopPadding {
+	top: calc(20px + var(--spacing-l));
+}
+
+.defaultTopPadding {
+	top: var(--spacing-l);
 }
 
 .status {

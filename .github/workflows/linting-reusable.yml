@@ -17,15 +17,16 @@ on:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    env:
+      NODE_OPTIONS: '--max-old-space-size=4096'
     steps:
       - uses: actions/checkout@v4.1.1
         with:
-          repository: n8n-io/n8n
           ref: ${{ inputs.ref }}
 
       - run: corepack enable
-      - uses: actions/setup-node@v4.0.2
+      - uses: useblacksmith/setup-node@v5
         with:
           node-version: 20.x
           cache: pnpm
@@ -33,16 +34,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Setup build cache
+        uses: useblacksmith/caching-for-turbo@v1
+
       - name: Build
         if: ${{ inputs.cacheKey == '' }}
         run: pnpm build
 
       - name: Restore cached build artifacts
         if: ${{ inputs.cacheKey != '' }}
-        uses: actions/cache/restore@v4.0.0
+        uses: useblacksmith/cache/restore@v5
         with:
           path: ./packages/**/dist
           key: ${{ inputs.cacheKey }}
+          fail-on-cache-miss: true
 
       - name: Lint Backend
         run: pnpm lint:backend

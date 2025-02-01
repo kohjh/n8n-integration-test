@@ -1,52 +1,101 @@
 <script lang="ts" setup>
 /* eslint-disable vue/no-multiple-template-root */
+import type { CanvasConnectionData } from '@/types';
+import { isValidNodeConnectionType } from '@/utils/typeGuards';
 import type { Connection, EdgeProps } from '@vue-flow/core';
-import { BaseEdge, EdgeLabelRenderer, getBezierPath } from '@vue-flow/core';
+import { BaseEdge, EdgeLabelRenderer } from '@vue-flow/core';
+import { NodeConnectionType } from 'n8n-workflow';
+import { computed, toRef, useCssModule } from 'vue';
 import CanvasEdgeToolbar from './CanvasEdgeToolbar.vue';
-import { computed, useCssModule } from 'vue';
+import { getEdgeRenderData } from './utils';
 
 const emit = defineEmits<{
+	add: [connection: Connection];
 	delete: [connection: Connection];
+	'update:label:hovered': [hovered: boolean];
 }>();
 
-const props = defineProps<
-	EdgeProps & {
-		hovered?: boolean;
-	}
->();
+export type CanvasEdgeProps = EdgeProps<CanvasConnectionData> & {
+	readOnly?: boolean;
+	hovered?: boolean;
+	bringToFront?: boolean; // Determines if entire edges layer should be brought to front
+};
+
+const props = defineProps<CanvasEdgeProps>();
+
+const data = toRef(props, 'data');
 
 const $style = useCssModule();
 
+const connectionType = computed(() =>
+	isValidNodeConnectionType(props.data.source.type)
+		? props.data.source.type
+		: NodeConnectionType.Main,
+);
+
+const renderToolbar = computed(() => props.hovered && !props.readOnly);
+
+const isMainConnection = computed(() => data.value.source.type === NodeConnectionType.Main);
+
+const status = computed(() => props.data.status);
+
+const edgeColor = computed(() => {
+	if (status.value === 'success') {
+		return 'var(--color-success)';
+	} else if (status.value === 'pinned') {
+		return 'var(--color-secondary)';
+	} else if (!isMainConnection.value) {
+		return 'var(--node-type-supplemental-color)';
+	} else if (props.selected) {
+		return 'var(--color-background-dark)';
+	} else {
+		return 'var(--color-foreground-xdark)';
+	}
+});
+
 const edgeStyle = computed(() => ({
-	strokeWidth: 2,
 	...props.style,
+	...(isMainConnection.value ? {} : { strokeDasharray: '8,8' }),
+	strokeWidth: 2,
+	stroke: props.hovered ? 'var(--color-primary)' : edgeColor.value,
 }));
 
-const isEdgeToolbarVisible = computed(() => props.selected || props.hovered);
+const edgeClasses = computed(() => ({
+	[$style.edge]: true,
+	hovered: props.hovered,
+	'bring-to-front': props.bringToFront,
+}));
+
+const edgeLabelStyle = computed(() => ({
+	color: edgeColor.value,
+}));
+
+const isConnectorStraight = computed(() => renderData.value.isConnectorStraight);
 
 const edgeToolbarStyle = computed(() => {
+	const translateY = isConnectorStraight.value ? '-150%' : '-50%';
+
 	return {
-		transform: `translate(-50%, -50%) translate(${path.value[1]}px,${path.value[2]}px)`,
+		transform: `translate(-50%, ${translateY}) translate(${labelPosition.value[0]}px, ${labelPosition.value[1]}px)`,
+		...(props.hovered ? { zIndex: 1 } : {}),
 	};
 });
 
 const edgeToolbarClasses = computed(() => ({
-	[$style.edgeToolbar]: true,
-	[$style.edgeToolbarVisible]: isEdgeToolbarVisible.value,
-	nodrag: true,
-	nopan: true,
+	[$style.edgeLabelWrapper]: true,
+	'vue-flow__edge-label': true,
+	selected: props.selected,
 }));
 
-const path = computed(() =>
-	getBezierPath({
-		sourceX: props.sourceX,
-		sourceY: props.sourceY,
-		sourcePosition: props.sourcePosition,
-		targetX: props.targetX,
-		targetY: props.targetY,
-		targetPosition: props.targetPosition,
+const renderData = computed(() =>
+	getEdgeRenderData(props, {
+		connectionType: connectionType.value,
 	}),
 );
+
+const segments = computed(() => renderData.value.segments);
+
+const labelPosition = computed(() => renderData.value.labelPosition);
 
 const connection = computed<Connection>(() => ({
 	source: props.source,
@@ -55,43 +104,82 @@ const connection = computed<Connection>(() => ({
 	targetHandle: props.targetHandleId,
 }));
 
+function onAdd() {
+	emit('add', connection.value);
+}
+
 function onDelete() {
 	emit('delete', connection.value);
+}
+
+function onEdgeLabelMouseEnter() {
+	emit('update:label:hovered', true);
+}
+
+function onEdgeLabelMouseLeave() {
+	emit('update:label:hovered', false);
 }
 </script>
 
 <template>
-	<BaseEdge
-		:id="id"
-		:style="edgeStyle"
-		:path="path[0]"
-		:marker-end="markerEnd"
-		:label="data?.label"
-		:label-x="path[1]"
-		:label-y="path[2]"
-		:label-style="{ fill: 'white' }"
-		:label-show-bg="true"
-		:label-bg-style="{ fill: 'red' }"
-		:label-bg-padding="[2, 4]"
-		:label-bg-border-radius="2"
-		:class="$style.edge"
-	/>
+	<g
+		data-test-id="edge"
+		:data-source-node-name="data.source?.node"
+		:data-target-node-name="data.target?.node"
+	>
+		<BaseEdge
+			v-for="(segment, index) in segments"
+			:id="`${id}-${index}`"
+			:key="segment[0]"
+			:class="edgeClasses"
+			:style="edgeStyle"
+			:path="segment[0]"
+			:marker-end="markerEnd"
+			:interaction-width="40"
+		/>
+	</g>
+
 	<EdgeLabelRenderer>
-		<CanvasEdgeToolbar :class="edgeToolbarClasses" :style="edgeToolbarStyle" @delete="onDelete" />
+		<div
+			data-test-id="edge-label"
+			:data-source-node-name="data.source?.node"
+			:data-target-node-name="data.target?.node"
+			:data-edge-status="status"
+			:style="edgeToolbarStyle"
+			:class="edgeToolbarClasses"
+			@mouseenter="onEdgeLabelMouseEnter"
+			@mouseleave="onEdgeLabelMouseLeave"
+		>
+			<CanvasEdgeToolbar
+				v-if="renderToolbar"
+				:type="connectionType"
+				@add="onAdd"
+				@delete="onDelete"
+			/>
+			<div v-else :style="edgeLabelStyle" :class="$style.edgeLabel">{{ label }}</div>
+		</div>
 	</EdgeLabelRenderer>
 </template>
 
 <style lang="scss" module>
-.edgeToolbar {
+.edge {
+	transition:
+		stroke 0.3s ease,
+		fill 0.3s ease;
+}
+
+.edgeLabelWrapper {
+	transform: translateY(calc(var(--spacing-xs) * -1));
 	position: absolute;
-	opacity: 0;
+}
 
-	&.edgeToolbarVisible {
-		opacity: 1;
-	}
-
-	&:hover {
-		opacity: 1;
-	}
+.edgeLabel {
+	font-size: var(--font-size-xs);
+	background-color: hsla(
+		var(--color-canvas-background-h),
+		var(--color-canvas-background-s),
+		var(--color-canvas-background-l),
+		0.85
+	);
 }
 </style>

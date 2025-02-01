@@ -73,7 +73,7 @@ docker run -it --rm \
  -p 5678:5678 \
  -v ~/.n8n:/home/node/.n8n \
  docker.n8n.io/n8nio/n8n \
- n8n start --tunnel
+ start --tunnel
 ```
 
 ## Persist data
@@ -230,6 +230,4 @@ Before you upgrade to the latest version make sure to check here if there are an
 
 ## License
 
-n8n is [fair-code](https://faircode.io) distributed under the [**Sustainable Use License**](https://github.com/n8n-io/n8n/blob/master/packages/cli/LICENSE.md).
-
-Additional information about the license can be found in the [docs](https://docs.n8n.io/reference/license/).
+You can find the license information [here](https://github.com/n8n-io/n8n/blob/master/README.md#license)

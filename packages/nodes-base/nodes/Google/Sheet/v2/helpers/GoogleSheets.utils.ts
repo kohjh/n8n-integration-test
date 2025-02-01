@@ -8,6 +8,7 @@ import type {
 	ResourceMapperField,
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
+
 import type { GoogleSheet } from './GoogleSheet';
 import type {
 	RangeDetectionOptions,
@@ -343,11 +344,16 @@ export function checkForSchemaChanges(
 ) {
 	const updatedColumnNames: Array<{ oldName: string; newName: string }> = [];
 
+	//if sheet does not contain ROW_NUMBER ignore it as data come from read rows operation
+	const schemaColumns = columnNames.includes(ROW_NUMBER)
+		? schema.map((s) => s.id)
+		: schema.filter((s) => s.id !== ROW_NUMBER).map((s) => s.id);
+
 	for (const [columnIndex, columnName] of columnNames.entries()) {
-		const schemaEntry = schema[columnIndex];
+		const schemaEntry = schemaColumns[columnIndex];
 		if (schemaEntry === undefined) break;
-		if (columnName !== schema[columnIndex].id) {
-			updatedColumnNames.push({ oldName: schema[columnIndex].id, newName: columnName });
+		if (columnName !== schemaEntry) {
+			updatedColumnNames.push({ oldName: schemaEntry, newName: columnName });
 		}
 	}
 

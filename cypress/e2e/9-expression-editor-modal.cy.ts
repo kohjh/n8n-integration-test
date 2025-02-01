@@ -14,6 +14,7 @@ describe('Expression editor modal', () => {
 	describe('Static data', () => {
 		beforeEach(() => {
 			WorkflowPage.actions.addNodeToCanvas('Hacker News');
+			WorkflowPage.actions.zoomToFit();
 			WorkflowPage.actions.openNode('Hacker News');
 			WorkflowPage.actions.openExpressionEditorModal();
 		});
@@ -69,6 +70,7 @@ describe('Expression editor modal', () => {
 			ndv.actions.close();
 			WorkflowPage.actions.addNodeToCanvas('No Operation');
 			WorkflowPage.actions.addNodeToCanvas('Hacker News');
+			WorkflowPage.actions.zoomToFit();
 			WorkflowPage.actions.openNode('Hacker News');
 			WorkflowPage.actions.openExpressionEditorModal();
 		});
@@ -103,7 +105,7 @@ describe('Expression editor modal', () => {
 			// Run workflow
 			cy.get('body').type('{esc}');
 			ndv.actions.close();
-			WorkflowPage.actions.executeNode('No Operation');
+			WorkflowPage.actions.executeNode('No Operation, do nothing', { anchor: 'topLeft' });
 			WorkflowPage.actions.openNode('Hacker News');
 			WorkflowPage.actions.openExpressionEditorModal();
 

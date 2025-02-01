@@ -1,4 +1,5 @@
 import type { INodeProperties } from 'n8n-workflow';
+
 import { SYSTEM_MESSAGE } from './prompt';
 
 export const toolsAgentProperties: INodeProperties[] = [
@@ -37,6 +38,14 @@ export const toolsAgentProperties: INodeProperties[] = [
 				type: 'boolean',
 				default: false,
 				description: 'Whether or not the output should include intermediate steps the agent took',
+			},
+			{
+				displayName: 'Automatically Passthrough Binary Images',
+				name: 'passthroughBinaryImages',
+				type: 'boolean',
+				default: true,
+				description:
+					'Whether or not binary images should be automatically passed through to the agent as image type messages',
 			},
 		],
 	},

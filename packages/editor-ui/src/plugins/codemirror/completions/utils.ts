@@ -16,8 +16,7 @@ import {
 } from '@codemirror/autocomplete';
 import type { EditorView } from '@codemirror/view';
 import type { TransactionSpec } from '@codemirror/state';
-import type { SyntaxNode } from '@lezer/common';
-import { javascriptLanguage } from '@codemirror/lang-javascript';
+import type { SyntaxNode, Tree } from '@lezer/common';
 import { useRouter } from 'vue-router';
 import type { DocMetadata } from 'n8n-workflow';
 import { escapeMappingString } from '@/utils/mappingUtils';
@@ -25,41 +24,107 @@ import { escapeMappingString } from '@/utils/mappingUtils';
 /**
  * Split user input into base (to resolve) and tail (to filter).
  */
-export function splitBaseTail(userInput: string): [string, string] {
-	const read = (node: SyntaxNode | null) => (node ? userInput.slice(node.from, node.to) : '');
-	const lastNode = javascriptLanguage.parser.parse(userInput).resolveInner(userInput.length, -1);
+export function splitBaseTail(syntaxTree: Tree, userInput: string): [string, string] {
+	const lastNode = syntaxTree.resolveInner(userInput.length, -1);
 
 	switch (lastNode.type.name) {
 		case '.':
-			return [read(lastNode.parent).slice(0, -1), ''];
+			return [read(lastNode.parent, userInput).slice(0, -1), ''];
 		case 'MemberExpression':
-			return [read(lastNode.parent), read(lastNode)];
+			return [read(lastNode.parent, userInput), read(lastNode, userInput)];
 		case 'PropertyName':
-			const tail = read(lastNode);
-			return [read(lastNode.parent).slice(0, -(tail.length + 1)), tail];
+			const tail = read(lastNode, userInput);
+			return [read(lastNode.parent, userInput).slice(0, -(tail.length + 1)), tail];
 		default:
 			return ['', ''];
 	}
 }
 
-export function longestCommonPrefix(...strings: string[]) {
-	if (strings.length < 2) {
-		throw new Error('Expected at least two strings');
-	}
+function replaceSyntaxNode(source: string, node: SyntaxNode, replacement: string) {
+	return source.slice(0, node.from) + replacement + source.slice(node.to);
+}
 
-	return strings.reduce((acc, next) => {
-		let i = 0;
+function isInputNodeCall(node: SyntaxNode, source: string): node is SyntaxNode {
+	return (
+		node.name === 'VariableName' &&
+		read(node, source) === '$' &&
+		node.parent?.name === 'CallExpression'
+	);
+}
 
-		while (acc[i] && next[i] && acc[i] === next[i]) {
-			i++;
+function isInputVariable(node: SyntaxNode | null | undefined, source: string): node is SyntaxNode {
+	return node?.name === 'VariableName' && read(node, source) === '$input';
+}
+
+function isItemProperty(node: SyntaxNode | null | undefined, source: string): node is SyntaxNode {
+	return (
+		node?.parent?.name === 'MemberExpression' &&
+		node.name === 'PropertyName' &&
+		read(node, source) === 'item'
+	);
+}
+
+function isItemMatchingCall(
+	node: SyntaxNode | null | undefined,
+	source: string,
+): node is SyntaxNode {
+	return (
+		node?.name === 'CallExpression' &&
+		node.firstChild?.lastChild?.name === 'PropertyName' &&
+		read(node.firstChild.lastChild, source) === 'itemMatching'
+	);
+}
+
+function read(node: SyntaxNode | null, source: string) {
+	return node ? source.slice(node.from, node.to) : '';
+}
+/**
+ * Replace expressions that depend on pairedItem with the first item when possible
+ * $input.item.json.foo -> $input.first().json.foo
+ * $('Node').item.json.foo -> $('Node').item.json.foo
+ */
+export function expressionWithFirstItem(syntaxTree: Tree, expression: string): string {
+	let result = expression;
+
+	syntaxTree.cursor().iterate(({ node }) => {
+		if (isInputVariable(node, expression)) {
+			if (isItemProperty(node.parent?.lastChild, expression)) {
+				result = replaceSyntaxNode(expression, node.parent.lastChild, 'first()');
+			} else if (isItemMatchingCall(node.parent?.parent, expression)) {
+				result = replaceSyntaxNode(expression, node.parent.parent, '$input.first()');
+			}
 		}
 
-		return acc.slice(0, i);
-	}, '');
+		if (isInputNodeCall(node, expression)) {
+			if (isItemProperty(node.parent?.parent?.lastChild, expression)) {
+				result = replaceSyntaxNode(expression, node.parent.parent.lastChild, 'first()');
+			} else if (isItemMatchingCall(node.parent?.parent?.parent, expression)) {
+				result = replaceSyntaxNode(
+					expression,
+					node.parent.parent.parent,
+					`${read(node.parent, expression)}.first()`,
+				);
+			}
+		}
+	});
+
+	return result;
+}
+
+export function longestCommonPrefix(...strings: string[]) {
+	if (strings.length < 2) return '';
+
+	return strings.reduce((prefix, str) => {
+		while (!str.startsWith(prefix)) {
+			prefix = prefix.slice(0, -1);
+			if (prefix === '') return '';
+		}
+		return prefix;
+	}, strings[0]);
 }
 
 export const prefixMatch = (first: string, second: string) =>
-	first.startsWith(second) && first !== second;
+	first.toLocaleLowerCase().startsWith(second.toLocaleLowerCase());
 
 export const isPseudoParam = (candidate: string) => {
 	const PSEUDO_PARAMS = ['notice']; // user input disallowed
@@ -82,7 +147,7 @@ export const isAllowedInDotNotation = (str: string) => {
 
 export function receivesNoBinaryData() {
 	try {
-		return resolveParameter('={{ $binary }}')?.data === undefined;
+		return resolveAutocompleteExpression('={{ $binary }}')?.data === undefined;
 	} catch {
 		return true;
 	}
@@ -92,7 +157,7 @@ export function hasNoParams(toResolve: string) {
 	let params;
 
 	try {
-		params = resolveParameter(`={{ ${toResolve}.params }}`);
+		params = resolveAutocompleteExpression(`={{ ${toResolve}.params }}`);
 	} catch {
 		return true;
 	}
@@ -104,11 +169,26 @@ export function hasNoParams(toResolve: string) {
 	return paramKeys.length === 1 && isPseudoParam(paramKeys[0]);
 }
 
+export function resolveAutocompleteExpression(expression: string) {
+	const ndvStore = useNDVStore();
+	return resolveParameter(
+		expression,
+		ndvStore.isInputParentOfActiveNode
+			? {
+					targetItem: ndvStore.expressionTargetItem ?? undefined,
+					inputNodeName: ndvStore.ndvInputNodeName,
+					inputRunIndex: ndvStore.ndvInputRunIndex,
+					inputBranchIndex: ndvStore.ndvInputBranchIndex,
+				}
+			: {},
+	);
+}
+
 // ----------------------------------
 //        state-based utils
 // ----------------------------------
 
-export const isCredentialsModalOpen = () => useUIStore().modals[CREDENTIAL_EDIT_MODAL_KEY].open;
+export const isCredentialsModalOpen = () => useUIStore().modalsById[CREDENTIAL_EDIT_MODAL_KEY].open;
 
 export const isInHttpNodePagination = () => {
 	const ndvStore = useNDVStore();
@@ -124,15 +204,29 @@ export const isSplitInBatchesAbsent = () =>
 	!useWorkflowsStore().workflow.nodes.some((node) => node.type === SPLIT_IN_BATCHES_NODE_TYPE);
 
 export function autocompletableNodeNames() {
-	const activeNodeName = useNDVStore().activeNode?.name;
+	const activeNode = useNDVStore().activeNode;
 
-	if (!activeNodeName) return [];
+	if (!activeNode) return [];
 
-	return useWorkflowHelpers({ router: useRouter() })
-		.getCurrentWorkflow()
-		.getParentNodesByDepth(activeNodeName)
+	const activeNodeName = activeNode.name;
+
+	const workflow = useWorkflowHelpers({ router: useRouter() }).getCurrentWorkflow();
+	const nonMainChildren = workflow.getChildNodes(activeNodeName, 'ALL_NON_MAIN');
+
+	// This is a tool node, look for the nearest node with main connections
+	if (nonMainChildren.length > 0) {
+		return nonMainChildren.map(getPreviousNodes).flat();
+	}
+
+	return getPreviousNodes(activeNodeName);
+}
+
+export function getPreviousNodes(nodeName: string) {
+	const workflow = useWorkflowHelpers({ router: useRouter() }).getCurrentWorkflow();
+	return workflow
+		.getParentNodesByDepth(nodeName)
 		.map((node) => node.name)
-		.filter((name) => name !== activeNodeName);
+		.filter((name) => name !== nodeName);
 }
 
 /**
@@ -270,3 +364,22 @@ export const getDisplayType = (value: unknown): string => {
 	if (typeof value === 'object') return 'Object';
 	return (typeof value).toLocaleLowerCase();
 };
+
+export function attempt<T, TDefault>(
+	fn: () => T,
+	onError: (error: unknown) => TDefault,
+): T | TDefault;
+export function attempt<T>(fn: () => T): T | null;
+export function attempt<T, TDefault>(
+	fn: () => T,
+	onError?: (error: unknown) => TDefault,
+): T | TDefault | null {
+	try {
+		return fn();
+	} catch (error) {
+		if (onError) {
+			return onError(error);
+		}
+		return null;
+	}
+}

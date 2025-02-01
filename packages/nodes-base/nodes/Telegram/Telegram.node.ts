@@ -1,5 +1,3 @@
-import type { Readable } from 'stream';
-
 import type {
 	IExecuteFunctions,
 	IDataObject,
@@ -8,9 +6,27 @@ import type {
 	INodeTypeDescription,
 	IHttpRequestMethods,
 } from 'n8n-workflow';
-import { BINARY_ENCODING, NodeOperationError } from 'n8n-workflow';
+import {
+	BINARY_ENCODING,
+	SEND_AND_WAIT_OPERATION,
+	NodeConnectionType,
+	NodeOperationError,
+} from 'n8n-workflow';
+import type { Readable } from 'stream';
 
-import { addAdditionalFields, apiRequest, getPropertyName } from './GenericFunctions';
+import {
+	addAdditionalFields,
+	apiRequest,
+	createSendAndWaitMessageBody,
+	getPropertyName,
+} from './GenericFunctions';
+import { appendAttributionOption } from '../../utils/descriptions';
+import { sendAndWaitWebhooksDescription } from '../../utils/sendAndWait/descriptions';
+import {
+	configureWaitTillDate,
+	getSendAndWaitProperties,
+	sendAndWaitWebhook,
+} from '../../utils/sendAndWait/utils';
 
 export class Telegram implements INodeType {
 	description: INodeTypeDescription = {
@@ -24,14 +40,16 @@ export class Telegram implements INodeType {
 		defaults: {
 			name: 'Telegram',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: [
 			{
 				name: 'telegramApi',
 				required: true,
 			},
 		],
+		webhooks: sendAndWaitWebhooksDescription,
 		properties: [
 			{
 				displayName: 'Resource',
@@ -261,6 +279,12 @@ export class Telegram implements INodeType {
 						value: 'sendMessage',
 						description: 'Send a text message',
 						action: 'Send a text message',
+					},
+					{
+						name: 'Send and Wait for Response',
+						value: SEND_AND_WAIT_OPERATION,
+						description: 'Send a message and wait for response',
+						action: 'Send message and wait for response',
 					},
 					{
 						name: 'Send Photo',
@@ -1289,6 +1313,26 @@ export class Telegram implements INodeType {
 														default: '',
 														description: 'HTTP or tg:// URL to be opened when button is pressed',
 													},
+													{
+														displayName: 'Web App',
+														name: 'web_app',
+														type: 'collection',
+														placeholder: 'Set Telegram Web App URL',
+														typeOptions: {
+															multipleValues: false,
+														},
+														default: {},
+														options: [
+															{
+																displayName: 'URL',
+																name: 'url',
+																type: 'string',
+																default: '',
+																description: 'An HTTPS URL of a Web App to be opened',
+															},
+														],
+														description: 'Launch the Telegram Web App',
+													},
 												],
 											},
 										],
@@ -1365,6 +1409,26 @@ export class Telegram implements INodeType {
 														default: false,
 														description: "Whether the user's request_location",
 													},
+													{
+														displayName: 'Web App',
+														name: 'web_app',
+														type: 'collection',
+														placeholder: 'Set Telegram Web App URL',
+														typeOptions: {
+															multipleValues: false,
+														},
+														default: {},
+														options: [
+															{
+																displayName: 'URL',
+																name: 'url',
+																type: 'string',
+																default: '',
+																description: 'An HTTPS URL of a Web App to be opened',
+															},
+														],
+														description: 'Launch the Telegram Web App',
+													},
 												],
 											},
 										],
@@ -1380,7 +1444,7 @@ export class Telegram implements INodeType {
 				displayName: 'Reply Keyboard Options',
 				name: 'replyKeyboardOptions',
 				type: 'collection',
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				displayOptions: {
 					show: {
 						replyMarkup: ['replyKeyboard'],
@@ -1468,11 +1532,7 @@ export class Telegram implements INodeType {
 				default: {},
 				options: [
 					{
-						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-miscased
-						displayName: 'Append n8n Attribution',
-						name: 'appendAttribution',
-						type: 'boolean',
-						default: true,
+						...appendAttributionOption,
 						description:
 							'Whether to include the phrase “This message was sent automatically with n8n” to the end of the message',
 						displayOptions: {
@@ -1698,8 +1758,30 @@ export class Telegram implements INodeType {
 					},
 				],
 			},
+			...getSendAndWaitProperties(
+				[
+					{
+						displayName: 'Chat ID',
+						name: 'chatId',
+						type: 'string',
+						default: '',
+						required: true,
+						description:
+							'Unique identifier for the target chat or username of the target channel (in the format @channelusername). To find your chat ID ask @get_id_bot.',
+					},
+				],
+				'message',
+				undefined,
+				{
+					noButtonStyle: true,
+					defaultApproveLabel: '✅ Approve',
+					defaultDisapproveLabel: '❌ Decline',
+				},
+			).filter((p) => p.name !== 'subject'),
 		],
 	};
+
+	webhook = sendAndWaitWebhook;
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
@@ -1719,6 +1801,17 @@ export class Telegram implements INodeType {
 
 		const nodeVersion = this.getNode().typeVersion;
 		const instanceId = this.getInstanceId();
+
+		if (resource === 'message' && operation === SEND_AND_WAIT_OPERATION) {
+			body = createSendAndWaitMessageBody(this);
+
+			await apiRequest.call(this, 'POST', 'sendMessage', body);
+
+			const waitTill = configureWaitTillDate(this);
+
+			await this.putExecutionToWait(waitTill);
+			return [this.getInputData()];
+		}
 
 		for (let i = 0; i < items.length; i++) {
 			try {
@@ -2102,7 +2195,7 @@ export class Telegram implements INodeType {
 				);
 				returnData.push(...executionData);
 			} catch (error) {
-				if (this.continueOnFail(error)) {
+				if (this.continueOnFail()) {
 					returnData.push({ json: {}, error: error.message });
 					continue;
 				}

@@ -1,11 +1,17 @@
+import type {
+	ActionResultRequestDto,
+	OptionsRequestDto,
+	ResourceLocatorRequestDto,
+	ResourceMapperFieldsRequestDto,
+} from '@n8n/api-types';
 import * as nodeTypesApi from '@/api/nodeTypes';
 import { HTTP_REQUEST_NODE_TYPE, STORES, CREDENTIAL_ONLY_HTTP_NODE_VERSION } from '@/constants';
-import type { DynamicNodeParameters, NodeTypesByTypeNameAndVersion } from '@/Interface';
+import type { NodeTypesByTypeNameAndVersion } from '@/Interface';
 import { addHeaders, addNodeTranslation } from '@/plugins/i18n';
 import { omit } from '@/utils/typesUtils';
 import type {
-	ConnectionTypes,
 	INode,
+	INodeInputConfiguration,
 	INodeOutputConfiguration,
 	INodeTypeDescription,
 	INodeTypeNameVersion,
@@ -137,7 +143,7 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 			(acc, node) => {
 				const outputTypes = node.outputs;
 				if (Array.isArray(outputTypes)) {
-					outputTypes.forEach((value: ConnectionTypes | INodeOutputConfiguration) => {
+					outputTypes.forEach((value: NodeConnectionType | INodeOutputConfiguration) => {
 						const outputType = typeof value === 'string' ? value : value.type;
 						if (!acc[outputType]) {
 							acc[outputType] = [];
@@ -147,7 +153,7 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 				} else {
 					// If outputs is not an array, it must be a string expression
 					// in which case we'll try to match all possible non-main output types that are supported
-					const connectorTypes: ConnectionTypes[] = [
+					const connectorTypes: NodeConnectionType[] = [
 						NodeConnectionType.AiVectorStore,
 						NodeConnectionType.AiChain,
 						NodeConnectionType.AiDocument,
@@ -158,7 +164,7 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 						NodeConnectionType.AiTextSplitter,
 						NodeConnectionType.AiTool,
 					];
-					connectorTypes.forEach((outputType: ConnectionTypes) => {
+					connectorTypes.forEach((outputType: NodeConnectionType) => {
 						if (outputTypes.includes(outputType)) {
 							acc[outputType] = acc[outputType] || [];
 							acc[outputType].push(node.name);
@@ -179,13 +185,15 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 			(acc, node) => {
 				const inputTypes = node.inputs;
 				if (Array.isArray(inputTypes)) {
-					inputTypes.forEach((value: ConnectionTypes | INodeOutputConfiguration) => {
-						const outputType = typeof value === 'string' ? value : value.type;
-						if (!acc[outputType]) {
-							acc[outputType] = [];
-						}
-						acc[outputType].push(node.name);
-					});
+					inputTypes.forEach(
+						(value: NodeConnectionType | INodeOutputConfiguration | INodeInputConfiguration) => {
+							const outputType = typeof value === 'string' ? value : value.type;
+							if (!acc[outputType]) {
+								acc[outputType] = [];
+							}
+							acc[outputType].push(node.name);
+						},
+					);
 				}
 
 				return acc;
@@ -280,24 +288,32 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 		}
 	};
 
-	const getNodeParameterOptions = async (sendData: DynamicNodeParameters.OptionsRequest) => {
+	const getNodeParameterOptions = async (sendData: OptionsRequestDto) => {
 		return await nodeTypesApi.getNodeParameterOptions(rootStore.restApiContext, sendData);
 	};
 
-	const getResourceLocatorResults = async (
-		sendData: DynamicNodeParameters.ResourceLocatorResultsRequest,
-	) => {
+	const getResourceLocatorResults = async (sendData: ResourceLocatorRequestDto) => {
 		return await nodeTypesApi.getResourceLocatorResults(rootStore.restApiContext, sendData);
 	};
 
-	const getResourceMapperFields = async (
-		sendData: DynamicNodeParameters.ResourceMapperFieldsRequest,
-	) => {
+	const getResourceMapperFields = async (sendData: ResourceMapperFieldsRequestDto) => {
 		try {
 			return await nodeTypesApi.getResourceMapperFields(rootStore.restApiContext, sendData);
 		} catch (error) {
 			return null;
 		}
+	};
+
+	const getLocalResourceMapperFields = async (sendData: ResourceMapperFieldsRequestDto) => {
+		try {
+			return await nodeTypesApi.getLocalResourceMapperFields(rootStore.restApiContext, sendData);
+		} catch (error) {
+			return null;
+		}
+	};
+
+	const getNodeParameterActionResult = async (sendData: ActionResultRequestDto) => {
+		return await nodeTypesApi.getNodeParameterActionResult(rootStore.restApiContext, sendData);
 	};
 
 	// #endregion
@@ -318,6 +334,8 @@ export const useNodeTypesStore = defineStore(STORES.NODE_TYPES, () => {
 		visibleNodeTypesByInputConnectionTypeNames,
 		isConfigurableNode,
 		getResourceMapperFields,
+		getLocalResourceMapperFields,
+		getNodeParameterActionResult,
 		getResourceLocatorResults,
 		getNodeParameterOptions,
 		getNodesInformation,

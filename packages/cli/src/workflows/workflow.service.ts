@@ -1,40 +1,40 @@
-import Container, { Service } from 'typedi';
-import { NodeApiError } from 'n8n-workflow';
-import pick from 'lodash/pick';
-import omit from 'lodash/omit';
-import { v4 as uuid } from 'uuid';
-import { BinaryDataService } from 'n8n-core';
-
-import config from '@/config';
-import type { User } from '@db/entities/User';
-import type { WorkflowEntity } from '@db/entities/WorkflowEntity';
-import { SharedWorkflowRepository } from '@db/repositories/sharedWorkflow.repository';
-import { WorkflowTagMappingRepository } from '@db/repositories/workflowTagMapping.repository';
-import { WorkflowRepository } from '@db/repositories/workflow.repository';
-import { ActiveWorkflowManager } from '@/ActiveWorkflowManager';
-import * as WorkflowHelpers from '@/WorkflowHelpers';
-import { validateEntity } from '@/GenericHelpers';
-import { ExternalHooks } from '@/ExternalHooks';
-import { hasSharing, type ListQuery } from '@/requests';
-import { TagService } from '@/services/tag.service';
-import { InternalHooks } from '@/InternalHooks';
-import { OwnershipService } from '@/services/ownership.service';
-import { WorkflowHistoryService } from './workflowHistory/workflowHistory.service.ee';
-import { Logger } from '@/Logger';
-import { OrchestrationService } from '@/services/orchestration.service';
-import { BadRequestError } from '@/errors/response-errors/bad-request.error';
-import { NotFoundError } from '@/errors/response-errors/not-found.error';
-import { RoleService } from '@/services/role.service';
-import { WorkflowSharingService } from './workflowSharing.service';
-import { ProjectService } from '@/services/project.service';
-import { ExecutionRepository } from '@/databases/repositories/execution.repository';
+import { GlobalConfig } from '@n8n/config';
+import { Service } from '@n8n/di';
 import type { Scope } from '@n8n/permissions';
 // eslint-disable-next-line n8n-local-rules/misplaced-n8n-typeorm-import
 import type { EntityManager } from '@n8n/typeorm';
 // eslint-disable-next-line n8n-local-rules/misplaced-n8n-typeorm-import
 import { In } from '@n8n/typeorm';
-import { SharedWorkflow } from '@/databases/entities/SharedWorkflow';
-import { EventRelay } from '@/eventbus/event-relay.service';
+import omit from 'lodash/omit';
+import pick from 'lodash/pick';
+import { BinaryDataService, Logger } from 'n8n-core';
+import { NodeApiError } from 'n8n-workflow';
+import { v4 as uuid } from 'uuid';
+
+import { ActiveWorkflowManager } from '@/active-workflow-manager';
+import config from '@/config';
+import { SharedWorkflow } from '@/databases/entities/shared-workflow';
+import type { User } from '@/databases/entities/user';
+import type { WorkflowEntity } from '@/databases/entities/workflow-entity';
+import { ExecutionRepository } from '@/databases/repositories/execution.repository';
+import { SharedWorkflowRepository } from '@/databases/repositories/shared-workflow.repository';
+import { WorkflowTagMappingRepository } from '@/databases/repositories/workflow-tag-mapping.repository';
+import { WorkflowRepository } from '@/databases/repositories/workflow.repository';
+import { BadRequestError } from '@/errors/response-errors/bad-request.error';
+import { NotFoundError } from '@/errors/response-errors/not-found.error';
+import { EventService } from '@/events/event.service';
+import { ExternalHooks } from '@/external-hooks';
+import { validateEntity } from '@/generic-helpers';
+import { hasSharing, type ListQuery } from '@/requests';
+import { OrchestrationService } from '@/services/orchestration.service';
+import { OwnershipService } from '@/services/ownership.service';
+import { ProjectService } from '@/services/project.service.ee';
+import { RoleService } from '@/services/role.service';
+import { TagService } from '@/services/tag.service';
+import * as WorkflowHelpers from '@/workflow-helpers';
+
+import { WorkflowHistoryService } from './workflow-history.ee/workflow-history.service.ee';
+import { WorkflowSharingService } from './workflow-sharing.service';
 
 @Service()
 export class WorkflowService {
@@ -54,7 +54,8 @@ export class WorkflowService {
 		private readonly workflowSharingService: WorkflowSharingService,
 		private readonly projectService: ProjectService,
 		private readonly executionRepository: ExecutionRepository,
-		private readonly eventRelay: EventRelay,
+		private readonly eventService: EventService,
+		private readonly globalConfig: GlobalConfig,
 	) {}
 
 	async getMany(user: User, options?: ListQuery.Options, includeScopes?: boolean) {
@@ -66,6 +67,20 @@ export class WorkflowService {
 		let { workflows, count } = await this.workflowRepository.getMany(sharedWorkflowIds, options);
 
 		if (hasSharing(workflows)) {
+			// Since we're filtering using project ID as part of the relation,
+			// we end up filtering out all the other relations, meaning that if
+			// it's shared to a project, it won't be able to find the home project.
+			// To solve this, we have to get all the relation now, even though
+			// we're deleting them later.
+			if (typeof options?.filter?.projectId === 'string' && options.filter.projectId !== '') {
+				const relations = await this.sharedWorkflowRepository.getAllRelationsForWorkflows(
+					workflows.map((c) => c.id),
+				);
+				workflows.forEach((c) => {
+					c.shared = relations.filter((r) => r.workflowId === c.id);
+				});
+			}
+
 			workflows = workflows.map((w) => this.ownershipService.addOwnedByAndSharedWith(w));
 		}
 
@@ -75,8 +90,8 @@ export class WorkflowService {
 		}
 
 		workflows.forEach((w) => {
-			// @ts-expect-error: This is to emulate the old behaviour of removing the shared
-			// field as part of `addOwnedByAndSharedWith`. We need this field in `addScopes`
+			// This is to emulate the old behaviour of removing the shared field as
+			// part of `addOwnedByAndSharedWith`. We need this field in `addScopes`
 			// though. So to avoid leaking the information we just delete it.
 			delete w.shared;
 		});
@@ -97,7 +112,7 @@ export class WorkflowService {
 		]);
 
 		if (!workflow) {
-			this.logger.verbose('User attempted to update a workflow without permissions', {
+			this.logger.warn('User attempted to update a workflow without permissions', {
 				workflowId,
 				userId: user.id,
 			});
@@ -121,7 +136,7 @@ export class WorkflowService {
 			// Update the workflow's version when changing properties such as
 			// `name`, `pinData`, `nodes`, `connections`, `settings` or `tags`
 			workflowUpdateData.versionId = uuid();
-			this.logger.verbose(
+			this.logger.debug(
 				`Updating versionId for workflow ${workflowId} for user ${user.id} after saving`,
 				{
 					previousVersionId: workflow.versionId,
@@ -189,7 +204,9 @@ export class WorkflowService {
 			]),
 		);
 
-		if (tagIds && !config.getEnv('workflowTagsDisabled')) {
+		const tagsDisabled = this.globalConfig.tags.disabled;
+
+		if (tagIds && !tagsDisabled) {
 			await this.workflowTagMappingRepository.overwriteTaggings(workflowId, tagIds);
 		}
 
@@ -197,7 +214,7 @@ export class WorkflowService {
 			await this.workflowHistoryService.saveVersion(user, workflowUpdateData, workflowId);
 		}
 
-		const relations = config.getEnv('workflowTagsDisabled') ? [] : ['tags'];
+		const relations = tagsDisabled ? [] : ['tags'];
 
 		// We sadly get nothing back from "update". Neither if it updated a record
 		// nor the new value. So query now the hopefully updated entry.
@@ -219,11 +236,10 @@ export class WorkflowService {
 		}
 
 		await this.externalHooks.run('workflow.afterUpdate', [updatedWorkflow]);
-		void Container.get(InternalHooks).onWorkflowSaved(user, updatedWorkflow, false);
-		this.eventRelay.emit('workflow-saved', {
+		this.eventService.emit('workflow-saved', {
 			user,
-			workflowId: updatedWorkflow.id,
-			workflowName: updatedWorkflow.name,
+			workflow: updatedWorkflow,
+			publicApi: false,
 		});
 
 		if (updatedWorkflow.active) {
@@ -256,6 +272,13 @@ export class WorkflowService {
 		return updatedWorkflow;
 	}
 
+	/**
+	 * Deletes a workflow and returns it.
+	 *
+	 * If the workflow is active this will deactivate the workflow.
+	 * If the user does not have the permissions to delete the workflow this does
+	 * nothing and returns void.
+	 */
 	async delete(user: User, workflowId: string): Promise<WorkflowEntity | undefined> {
 		await this.externalHooks.run('workflow.delete', [workflowId]);
 
@@ -282,8 +305,7 @@ export class WorkflowService {
 		await this.workflowRepository.delete(workflowId);
 		await this.binaryDataService.deleteMany(idsForDeletion);
 
-		void Container.get(InternalHooks).onWorkflowDeleted(user, workflowId, false);
-		this.eventRelay.emit('workflow-deleted', { user, workflowId });
+		this.eventService.emit('workflow-deleted', { user, workflowId, publicApi: false });
 		await this.externalHooks.run('workflow.afterDelete', [workflowId]);
 
 		return workflow;

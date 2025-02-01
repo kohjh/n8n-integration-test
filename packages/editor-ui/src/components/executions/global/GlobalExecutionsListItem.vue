@@ -1,30 +1,43 @@
 <script lang="ts" setup>
 import { ref, computed, useCssModule } from 'vue';
 import type { ExecutionSummary } from 'n8n-workflow';
+import { WAIT_INDEFINITELY } from 'n8n-workflow';
 import { useI18n } from '@/composables/useI18n';
-import { VIEWS, WAIT_TIME_UNLIMITED } from '@/constants';
-import { useRouter } from 'vue-router';
 import { convertToDisplayDate } from '@/utils/formatters/dateFormatter';
 import { i18n as locale } from '@/plugins/i18n';
 import ExecutionsTime from '@/components/executions/ExecutionsTime.vue';
 import { useExecutionHelpers } from '@/composables/useExecutionHelpers';
+import type { PermissionsRecord } from '@/permissions';
+import GlobalExecutionsListItemQueuedTooltip from '@/components/executions/global/GlobalExecutionsListItemQueuedTooltip.vue';
 
-const emit = defineEmits(['stop', 'select', 'retrySaved', 'retryOriginal', 'delete']);
+type Command = 'retrySaved' | 'retryOriginal' | 'delete';
+
+const emit = defineEmits<{
+	stop: [data: ExecutionSummary];
+	select: [data: ExecutionSummary];
+	retrySaved: [data: ExecutionSummary];
+	retryOriginal: [data: ExecutionSummary];
+	delete: [data: ExecutionSummary];
+	goToUpgrade: [];
+}>();
 
 const props = withDefaults(
 	defineProps<{
 		execution: ExecutionSummary;
 		selected?: boolean;
 		workflowName?: string;
+		workflowPermissions: PermissionsRecord['workflow'];
+		concurrencyCap: number;
+		isCloudDeployment?: boolean;
 	}>(),
 	{
 		selected: false,
+		workflowName: '',
 	},
 );
 
 const style = useCssModule();
 const i18n = useI18n();
-const router = useRouter();
 const executionHelpers = useExecutionHelpers();
 
 const isStopping = ref(false);
@@ -33,12 +46,16 @@ const isRunning = computed(() => {
 	return props.execution.status === 'running';
 });
 
+const isQueued = computed(() => {
+	return props.execution.status === 'new';
+});
+
 const isWaitTillIndefinite = computed(() => {
 	if (!props.execution.waitTill) {
 		return false;
 	}
 
-	return new Date(props.execution.waitTill).toISOString() === WAIT_TIME_UNLIMITED;
+	return new Date(props.execution.waitTill).getTime() === WAIT_INDEFINITELY.getTime();
 });
 
 const isRetriable = computed(() => executionHelpers.isExecutionRetriable(props.execution));
@@ -51,7 +68,9 @@ const classes = computed(() => {
 });
 
 const formattedStartedAtDate = computed(() => {
-	return props.execution.startedAt ? formatDate(props.execution.startedAt) : '';
+	return props.execution.startedAt
+		? formatDate(props.execution.startedAt)
+		: i18n.baseText('executionsList.startingSoon');
 });
 
 const formattedWaitTillDate = computed(() => {
@@ -68,13 +87,6 @@ const formattedStoppedAtDate = computed(() => {
 		: '';
 });
 
-const statusTooltipText = computed(() => {
-	if (props.execution.status === 'waiting' && isWaitTillIndefinite.value) {
-		return i18n.baseText('executionsList.statusTooltipText.theWorkflowIsWaitingIndefinitely');
-	}
-	return '';
-});
-
 const statusText = computed(() => {
 	switch (props.execution.status) {
 		case 'waiting':
@@ -84,7 +96,7 @@ const statusText = computed(() => {
 		case 'crashed':
 			return i18n.baseText('executionsList.error');
 		case 'new':
-			return i18n.baseText('executionsList.running');
+			return i18n.baseText('executionsList.new');
 		case 'running':
 			return i18n.baseText('executionsList.running');
 		case 'success':
@@ -111,7 +123,7 @@ const statusTextTranslationPath = computed(() => {
 				return 'executionsList.statusText';
 			}
 		case 'new':
-			return 'executionsList.statusRunning';
+			return 'executionsList.statusTextWithoutTime';
 		case 'running':
 			return 'executionsList.statusRunning';
 		default:
@@ -125,11 +137,7 @@ function formatDate(fullDate: Date | string | number) {
 }
 
 function displayExecution() {
-	const route = router.resolve({
-		name: VIEWS.EXECUTION_PREVIEW,
-		params: { name: props.execution.workflowId, executionId: props.execution.id },
-	});
-	window.open(route.href, '_blank');
+	executionHelpers.openExecutionInNewTab(props.execution.id, props.execution.workflowId);
 }
 
 function onStopExecution() {
@@ -141,7 +149,8 @@ function onSelect() {
 	emit('select', props.execution);
 }
 
-async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal' | 'delete') {
+async function handleActionItemClick(commandData: Command) {
+	//@ts-ignore todo: fix this type
 	emit(commandData, props.execution);
 }
 </script>
@@ -170,7 +179,7 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 					<FontAwesomeIcon icon="spinner" spin />
 				</span>
 				<i18n-t
-					v-if="!isWaitTillIndefinite"
+					v-if="!isWaitTillIndefinite && !isQueued"
 					data-test-id="execution-status"
 					tag="span"
 					:keypath="statusTextTranslationPath"
@@ -183,15 +192,21 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 						<span v-else-if="!!execution.stoppedAt">
 							{{ formattedStoppedAtDate }}
 						</span>
-						<ExecutionsTime v-else :start-time="execution.startedAt" />
+						<ExecutionsTime
+							v-else-if="execution.status !== 'new'"
+							:start-time="execution.startedAt"
+						/>
 					</template>
 				</i18n-t>
-				<N8nTooltip v-else placement="top">
-					<template #content>
-						<span>{{ statusTooltipText }}</span>
-					</template>
+				<GlobalExecutionsListItemQueuedTooltip
+					v-else
+					:status="props.execution.status"
+					:concurrency-cap="props.concurrencyCap"
+					:is-cloud-deployment="props.isCloudDeployment"
+					@go-to-upgrade="emit('goToUpgrade')"
+				>
 					<span :class="$style.status">{{ statusText }}</span>
-				</N8nTooltip>
+				</GlobalExecutionsListItemQueuedTooltip>
 			</div>
 		</td>
 		<td>
@@ -213,6 +228,12 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 					<span>{{ i18n.baseText('executionsList.test') }}</span>
 				</template>
 				<FontAwesomeIcon icon="flask" />
+			</N8nTooltip>
+			<N8nTooltip v-if="execution.mode === 'evaluation'" placement="top">
+				<template #content>
+					<span>{{ i18n.baseText('executionsList.evaluation') }}</span>
+				</template>
+				<FontAwesomeIcon icon="tasks" />
 			</N8nTooltip>
 		</td>
 		<td>
@@ -254,6 +275,7 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 							data-test-id="execution-retry-saved-dropdown-item"
 							:class="$style.retryAction"
 							command="retrySaved"
+							:disabled="!workflowPermissions.execute"
 						>
 							{{ i18n.baseText('executionsList.retryWithCurrentlySavedWorkflow') }}
 						</ElDropdownItem>
@@ -262,6 +284,7 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 							data-test-id="execution-retry-original-dropdown-item"
 							:class="$style.retryAction"
 							command="retryOriginal"
+							:disabled="!workflowPermissions.execute"
 						>
 							{{ i18n.baseText('executionsList.retryWithOriginalWorkflow') }}
 						</ElDropdownItem>
@@ -269,6 +292,7 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 							data-test-id="execution-delete-dropdown-item"
 							:class="$style.deleteAction"
 							command="delete"
+							:disabled="!workflowPermissions.update"
 						>
 							{{ i18n.baseText('generic.delete') }}
 						</ElDropdownItem>
@@ -325,7 +349,10 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 		background: var(--execution-card-border-success);
 	}
 
-	&.new td:first-child::before,
+	&.new td:first-child::before {
+		background: var(--execution-card-border-waiting);
+	}
+
 	&.running td:first-child::before {
 		background: var(--execution-card-border-running);
 	}
@@ -373,7 +400,10 @@ async function handleActionItemClick(commandData: 'retrySaved' | 'retryOriginal'
 		font-weight: var(--font-weight-normal);
 	}
 
-	.new &,
+	.new & {
+		color: var(--execution-card-text-waiting);
+	}
+
 	.running & {
 		color: var(--color-warning);
 	}

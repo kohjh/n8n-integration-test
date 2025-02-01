@@ -1,3 +1,26 @@
+<script lang="ts" setup>
+import { MAIN_HEADER_TABS } from '@/constants';
+import type { ITabBarItem } from '@/Interface';
+
+withDefaults(
+	defineProps<{
+		items: ITabBarItem[];
+		modelValue?: string;
+	}>(),
+	{
+		modelValue: MAIN_HEADER_TABS.WORKFLOW,
+	},
+);
+
+const emit = defineEmits<{
+	'update:modelValue': [tab: MAIN_HEADER_TABS, event: MouseEvent];
+}>();
+
+function onUpdateModelValue(tab: MAIN_HEADER_TABS, event: MouseEvent): void {
+	emit('update:modelValue', tab, event);
+}
+</script>
+
 <template>
 	<div
 		v-if="items"
@@ -14,39 +37,19 @@
 	</div>
 </template>
 
-<script lang="ts" setup>
-import { MAIN_HEADER_TABS } from '@/constants';
-import type { ITabBarItem } from '@/Interface';
-
-withDefaults(
-	defineProps<{
-		items: ITabBarItem[];
-		modelValue?: string;
-	}>(),
-	{
-		modelValue: MAIN_HEADER_TABS.WORKFLOW,
-	},
-);
-
-const emit = defineEmits(['update:modelValue']);
-
-function onUpdateModelValue(tab: string, event: MouseEvent): void {
-	emit('update:modelValue', tab, event);
-}
-</script>
-
 <style module lang="scss">
 .container {
 	position: absolute;
-	top: 47px;
+	bottom: 0;
 	left: 50%;
-	transform: translateX(-50%);
+	transform: translateX(-50%) translateY(50%);
 	min-height: 30px;
 	display: flex;
 	padding: var(--spacing-5xs);
 	background-color: var(--color-foreground-base);
 	border-radius: var(--border-radius-base);
 	transition: all 150ms ease-in-out;
+	z-index: 1;
 }
 
 @media screen and (max-width: 430px) {

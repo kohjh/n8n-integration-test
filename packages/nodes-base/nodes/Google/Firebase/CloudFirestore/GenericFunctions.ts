@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import type {
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
@@ -8,13 +9,12 @@ import type {
 } from 'n8n-workflow';
 import { NodeApiError } from 'n8n-workflow';
 
-import moment from 'moment-timezone';
+import { getGoogleAccessToken } from '../../GenericFunctions';
 
 export async function googleApiRequest(
 	this: IExecuteFunctions | ILoadOptionsFunctions,
 	method: IHttpRequestMethods,
 	resource: string,
-
 	body: any = {},
 	qs: IDataObject = {},
 	uri: string | null = null,
@@ -37,12 +37,19 @@ export async function googleApiRequest(
 			delete options.body;
 		}
 
-		//@ts-ignore
-		return await this.helpers.requestOAuth2.call(
-			this,
-			'googleFirebaseCloudFirestoreOAuth2Api',
-			options,
-		);
+		let credentialType = 'googleFirebaseCloudFirestoreOAuth2Api';
+		const authentication = this.getNodeParameter('authentication', 0) as string;
+
+		if (authentication === 'serviceAccount') {
+			const credentials = await this.getCredentials('googleApi');
+			credentialType = 'googleApi';
+
+			const { access_token } = await getGoogleAccessToken.call(this, credentials, 'firestore');
+
+			(options.headers as IDataObject).Authorization = `Bearer ${access_token}`;
+		}
+
+		return await this.helpers.requestWithAuthentication.call(this, credentialType, options);
 	} catch (error) {
 		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}

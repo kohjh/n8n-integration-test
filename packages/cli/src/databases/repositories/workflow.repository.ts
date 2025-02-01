@@ -1,4 +1,5 @@
-import { Service } from 'typedi';
+import { GlobalConfig } from '@n8n/config';
+import { Service } from '@n8n/di';
 import {
 	DataSource,
 	Repository,
@@ -10,15 +11,19 @@ import {
 	type FindManyOptions,
 	type FindOptionsRelations,
 } from '@n8n/typeorm';
+
 import type { ListQuery } from '@/requests';
 import { isStringArray } from '@/utils';
-import config from '@/config';
-import { WorkflowEntity } from '../entities/WorkflowEntity';
-import { WebhookEntity } from '../entities/WebhookEntity';
+
+import { WebhookEntity } from '../entities/webhook-entity';
+import { WorkflowEntity } from '../entities/workflow-entity';
 
 @Service()
 export class WorkflowRepository extends Repository<WorkflowEntity> {
-	constructor(dataSource: DataSource) {
+	constructor(
+		dataSource: DataSource,
+		private readonly globalConfig: GlobalConfig,
+	) {
 		super(WorkflowEntity, dataSource.manager);
 	}
 
@@ -39,10 +44,12 @@ export class WorkflowRepository extends Repository<WorkflowEntity> {
 		});
 	}
 
-	async getActiveIds() {
+	async getActiveIds({ maxResults }: { maxResults?: number } = {}) {
 		const activeWorkflows = await this.find({
 			select: ['id'],
 			where: { active: true },
+			// 'take' and 'order' are only needed when maxResults is provided:
+			...(maxResults ? { take: maxResults, order: { createdAt: 'ASC' } } : {}),
 		});
 		return activeWorkflows.map((workflow) => workflow.id);
 	}
@@ -73,12 +80,13 @@ export class WorkflowRepository extends Repository<WorkflowEntity> {
 
 	async updateWorkflowTriggerCount(id: string, triggerCount: number): Promise<UpdateResult> {
 		const qb = this.createQueryBuilder('workflow');
+		const dbType = this.globalConfig.database.type;
 		return await qb
 			.update()
 			.set({
 				triggerCount,
 				updatedAt: () => {
-					if (['mysqldb', 'mariadb'].includes(config.getEnv('database.type'))) {
+					if (['mysqldb', 'mariadb'].includes(dbType)) {
 						return 'updatedAt';
 					}
 					return '"updatedAt"';
@@ -88,7 +96,8 @@ export class WorkflowRepository extends Repository<WorkflowEntity> {
 			.execute();
 	}
 
-	async getMany(sharedWorkflowIds: string[], options?: ListQuery.Options) {
+	async getMany(sharedWorkflowIds: string[], originalOptions: ListQuery.Options = {}) {
+		const options = structuredClone(originalOptions);
 		if (sharedWorkflowIds.length === 0) return { workflows: [], count: 0 };
 
 		if (typeof options?.filter?.projectId === 'string' && options.filter.projectId !== '') {
@@ -124,7 +133,7 @@ export class WorkflowRepository extends Repository<WorkflowEntity> {
 
 		const relations: string[] = [];
 
-		const areTagsEnabled = !config.getEnv('workflowTagsDisabled');
+		const areTagsEnabled = !this.globalConfig.tags.disabled;
 		const isDefaultSelect = options?.select === undefined;
 		const areTagsRequested = isDefaultSelect || options?.select?.tags === true;
 		const isOwnedByIncluded = isDefaultSelect || options?.select?.ownedBy === true;

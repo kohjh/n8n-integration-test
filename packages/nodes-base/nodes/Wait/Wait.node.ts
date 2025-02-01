@@ -7,8 +7,18 @@ import type {
 	IDisplayOptions,
 	IWebhookFunctions,
 } from 'n8n-workflow';
-import { WAIT_TIME_UNLIMITED } from 'n8n-workflow';
+import { NodeOperationError, NodeConnectionType, WAIT_INDEFINITELY } from 'n8n-workflow';
 
+import { updateDisplayOptions } from '../../utils/utilities';
+import {
+	formDescription,
+	formFields,
+	respondWithOptions,
+	formRespondMode,
+	formTitle,
+	appendAttributionToForm,
+} from '../Form/common.descriptions';
+import { formWebhook } from '../Form/utils';
 import {
 	authenticationProperty,
 	credentialsProperty,
@@ -20,16 +30,6 @@ import {
 	responseDataProperty,
 	responseModeProperty,
 } from '../Webhook/description';
-
-import {
-	formDescription,
-	formFields,
-	respondWithOptions,
-	formRespondMode,
-	formTitle,
-} from '../Form/common.descriptions';
-import { formWebhook } from '../Form/utils';
-import { updateDisplayOptions } from '../../utils/utilities';
 import { Webhook } from '../Webhook/Webhook.node';
 
 const toWaitAmount: INodeProperties = {
@@ -234,8 +234,8 @@ export class Wait extends Webhook {
 			name: 'Wait',
 			color: '#804050',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: credentialsProperty(this.authPropertyName),
 		webhooks: [
 			{
@@ -295,6 +295,29 @@ export class Wait extends Webhook {
 				description: 'Determines the waiting mode to use before the workflow continues',
 			},
 			{
+				displayName: 'Authentication',
+				name: 'incomingAuthentication',
+				type: 'options',
+				options: [
+					{
+						name: 'Basic Auth',
+						value: 'basicAuth',
+					},
+					{
+						name: 'None',
+						value: 'none',
+					},
+				],
+				default: 'none',
+				description:
+					'If and how incoming resume-webhook-requests to $execution.resumeFormUrl should be authenticated for additional security',
+				displayOptions: {
+					show: {
+						resume: ['form'],
+					},
+				},
+			},
+			{
 				...authenticationProperty(this.authPropertyName),
 				description:
 					'If and how incoming resume-webhook-requests to $execution.resumeUrl should be authenticated for additional security',
@@ -315,6 +338,7 @@ export class Wait extends Webhook {
 				},
 				default: '',
 				description: 'The date and time to wait for before continuing',
+				required: true,
 			},
 
 			// ----------------------------------
@@ -394,7 +418,7 @@ export class Wait extends Webhook {
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				default: {},
 				displayOptions: {
 					show: {
@@ -404,13 +428,13 @@ export class Wait extends Webhook {
 						responseMode: ['responseNode'],
 					},
 				},
-				options: [respondWithOptions, webhookSuffix],
+				options: [appendAttributionToForm, respondWithOptions, webhookSuffix],
 			},
 			{
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				default: {},
 				displayOptions: {
 					show: {
@@ -420,14 +444,14 @@ export class Wait extends Webhook {
 						responseMode: ['onReceived', 'lastNode'],
 					},
 				},
-				options: [webhookSuffix],
+				options: [appendAttributionToForm, webhookSuffix],
 			},
 		],
 	};
 
 	async webhook(context: IWebhookFunctions) {
 		const resume = context.getNodeParameter('resume', 0) as string;
-		if (resume === 'form') return await formWebhook(context);
+		if (resume === 'form') return await formWebhook(context, this.authPropertyName);
 		return await super.webhook(context);
 	}
 
@@ -461,6 +485,13 @@ export class Wait extends Webhook {
 		} else {
 			const dateTimeStr = context.getNodeParameter('dateTime', 0) as string;
 
+			if (isNaN(Date.parse(dateTimeStr))) {
+				throw new NodeOperationError(
+					context.getNode(),
+					'[Wait node] Cannot put execution to wait because `dateTime` parameter is not a valid date. Please pick a specific date and time to wait until.',
+				);
+			}
+
 			waitTill = DateTime.fromFormat(dateTimeStr, "yyyy-MM-dd'T'HH:mm:ss", {
 				zone: context.getTimezone(),
 			})
@@ -484,7 +515,7 @@ export class Wait extends Webhook {
 	}
 
 	private async configureAndPutToWait(context: IExecuteFunctions) {
-		let waitTill = new Date(WAIT_TIME_UNLIMITED);
+		let waitTill = WAIT_INDEFINITELY;
 		const limitWaitTime = context.getNodeParameter('limitWaitTime', 0);
 
 		if (limitWaitTime === true) {

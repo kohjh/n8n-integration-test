@@ -1,29 +1,3 @@
-<template>
-	<div>
-		<aside
-			:class="{
-				[$style.nodeCreatorScrim]: true,
-				[$style.active]: showScrim,
-			}"
-		/>
-		<SlideTransition>
-			<div
-				v-if="active"
-				ref="nodeCreator"
-				:class="{ [$style.nodeCreator]: true, [$style.chatOpened]: chatSidebarOpen }"
-				:style="nodeCreatorInlineStyle"
-				data-test-id="node-creator"
-				@dragover="onDragOver"
-				@drop="onDrop"
-				@mousedown="onMouseDown"
-				@mouseup="onMouseUp"
-			>
-				<NodesListPanel @node-type-selected="onNodeTypeSelected" />
-			</div>
-		</SlideTransition>
-	</div>
-</template>
-
 <script setup lang="ts">
 import { watch, reactive, toRefs, computed, onBeforeUnmount } from 'vue';
 
@@ -37,8 +11,9 @@ import { useActionsGenerator } from './composables/useActionsGeneration';
 import NodesListPanel from './Panel/NodesListPanel.vue';
 import { useCredentialsStore } from '@/stores/credentials.store';
 import { useUIStore } from '@/stores/ui.store';
-import { useAIStore } from '@/stores/ai.store';
 import { DRAG_EVENT_DATA_KEY } from '@/constants';
+import { useAssistantStore } from '@/stores/assistant.store';
+import N8nIconButton from 'n8n-design-system/components/N8nIconButton/IconButton.vue';
 
 export interface Props {
 	active?: boolean;
@@ -49,11 +24,11 @@ const props = defineProps<Props>();
 const { resetViewStacks } = useViewStacks();
 const { registerKeyHook } = useKeyboardNavigation();
 const emit = defineEmits<{
-	(event: 'closeNodeCreator'): void;
-	(event: 'nodeTypeSelected', value: string[]): void;
+	closeNodeCreator: [];
+	nodeTypeSelected: [value: string[]];
 }>();
 const uiStore = useUIStore();
-const aiStore = useAIStore();
+const assistantStore = useAssistantStore();
 
 const { setShowScrim, setActions, setMergeNodes } = useNodeCreatorStore();
 const { generateMergedNodesAndActions } = useActionsGenerator();
@@ -67,10 +42,9 @@ const showScrim = computed(() => useNodeCreatorStore().showScrim);
 
 const viewStacksLength = computed(() => useViewStacks().viewStacks.length);
 
-const chatSidebarOpen = computed(() => aiStore.assistantChatOpen);
-
 const nodeCreatorInlineStyle = computed(() => {
-	return { top: `${uiStore.bannersHeight + uiStore.headerHeight}px` };
+	const rightPosition = assistantStore.isAssistantOpen ? assistantStore.chatWidth : 0;
+	return { top: `${uiStore.bannersHeight + uiStore.headerHeight}px`, right: `${rightPosition}px` };
 });
 function onMouseUpOutside() {
 	if (state.mousedownInsideEvent) {
@@ -128,8 +102,8 @@ watch(
 );
 
 // Close node creator when the last view stacks is closed
-watch(viewStacksLength, (viewStacksLength) => {
-	if (viewStacksLength === 0) {
+watch(viewStacksLength, (value) => {
+	if (value === 0) {
 		emit('closeNodeCreator');
 		setShowScrim(false);
 	}
@@ -164,23 +138,54 @@ onBeforeUnmount(() => {
 });
 </script>
 
+<template>
+	<div>
+		<aside
+			:class="{
+				[$style.nodeCreatorScrim]: true,
+				[$style.active]: showScrim,
+			}"
+		/>
+		<N8nIconButton
+			v-if="active"
+			:class="$style.close"
+			type="secondary"
+			icon="times"
+			aria-label="Close Node Creator"
+			@click="emit('closeNodeCreator')"
+		/>
+		<SlideTransition>
+			<div
+				v-if="active"
+				ref="nodeCreator"
+				:class="{ [$style.nodeCreator]: true }"
+				:style="nodeCreatorInlineStyle"
+				data-test-id="node-creator"
+				@dragover="onDragOver"
+				@drop="onDrop"
+				@mousedown="onMouseDown"
+				@mouseup="onMouseUp"
+			>
+				<NodesListPanel @node-type-selected="onNodeTypeSelected" />
+			</div>
+		</SlideTransition>
+	</div>
+</template>
+
 <style module lang="scss">
 :global(strong) {
 	font-weight: var(--font-weight-bold);
 }
 .nodeCreator {
+	--node-creator-width: #{$node-creator-width};
 	--node-icon-color: var(--color-text-base);
 	position: fixed;
 	top: $header-height;
 	bottom: 0;
 	right: 0;
-	z-index: 200;
-	width: $node-creator-width;
+	z-index: var(--z-index-node-creator);
+	width: var(--node-creator-width);
 	color: $node-creator-text-color;
-
-	&.chatOpened {
-		right: $chat-width;
-	}
 }
 
 .nodeCreatorScrim {
@@ -197,6 +202,26 @@ onBeforeUnmount(() => {
 
 	&.active {
 		opacity: 0.7;
+	}
+}
+
+.close {
+	position: absolute;
+	z-index: calc(var(--z-index-node-creator) + 1);
+	top: var(--spacing-xs);
+	right: var(--spacing-xs);
+	background: transparent;
+	border: 0;
+	display: none;
+}
+
+@media screen and (max-width: #{$node-creator-width + $sidebar-width}) {
+	.nodeCreator {
+		--node-creator-width: calc(100vw - #{$sidebar-width});
+	}
+
+	.close {
+		display: inline-flex;
 	}
 }
 </style>
